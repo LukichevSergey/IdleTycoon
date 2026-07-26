@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Финансовый магнат</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="app">
+  <header class="app-header">
+    <div class="app-title">💰 Финансовый <span class="gold">магнат</span></div>
+    <div class="header-balance" id="header-balance"></div>
+    <div class="save-indicator" id="save-indicator">сохранено</div>
+  </header>
+
+  <!-- Навигация по вкладкам генерируется из конфига табов (main.js) -->
+  <nav class="tabs-nav" id="tabs-nav"></nav>
+  <main id="tabs-container"></main>
+</div>
+
+<!-- Контейнер всплывающих уведомлений -->
+<div class="toasts" id="toasts"></div>
+
+<!-- Модальное окно офлайн-дохода -->
+<div class="modal-overlay" id="offline-modal">
+  <div class="modal modal-center">
+    <div class="emoji">🌙</div>
+    <h2>С возвращением!</h2>
+    <div class="m-line">Пока вас не было, ваши активы работали:</div>
+    <div class="offline-sum" id="offline-sum">0 ₽</div>
+    <div class="offline-rows" id="offline-rows"></div>
+    <div class="m-line" id="offline-time"></div>
+    <button class="buy-btn" id="offline-collect-btn" style="width:100%">Забрать</button>
+  </div>
+</div>
+
+<!-- Модальное окно торговли (акции/облигации/крипта) -->
+<div class="modal-overlay" id="trade-modal">
+  <div class="modal">
+    <button class="close-x" id="trade-close">✕</button>
+    <h2 id="trade-title">—</h2>
+    <div class="m-line" id="trade-sub">—</div>
+    <div class="m-line">Цена: <b id="trade-price">—</b> <span id="trade-chg"></span></div>
+    <div class="m-line" id="trade-pos">—</div>
+    <div class="m-line" id="trade-extra"></div>
+    <div class="trade-qty-row">
+      <input type="number" class="num-input" id="trade-qty" min="0" value="1">
+      <button class="btn-sm" id="trade-max-buy">Макс. покупка</button>
+      <button class="btn-sm" id="trade-all-sell">Всё</button>
+    </div>
+    <div class="modal-actions">
+      <button class="buy-btn" id="trade-buy">Купить</button>
+      <button class="buy-btn sell" id="trade-sell">Продать</button>
+    </div>
+    <div class="fee-note">Комиссия брокера 0,3% на покупку и продажу</div>
+  </div>
+</div>
+
+<!-- Классические скрипты (не ES-модули), чтобы игра открывалась и с file://
+     двойным кликом, и с github.io. ПОРЯДОК ПОДКЛЮЧЕНИЯ ВАЖЕН:
+     конфиг → утилиты → данные → ядро → UI → точка сборки. -->
+<script src="js/config.js"></script>
+<script src="js/core/utils.js"></script>
+<script src="js/core/eventEmitter.js"></script>
+<script src="js/data/properties.js"></script>
+<script src="js/data/market.js"></script>
+<script src="js/data/deposits.js"></script>
+<script src="js/core/marketSim.js"></script>
+<script src="js/core/storage.js"></script>
+<script src="js/core/gameState.js"></script>
+<script src="js/ui/toasts.js"></script>
+<script src="js/ui/modals.js"></script>
+<script src="js/ui/homeView.js"></script>
+<script src="js/ui/realtySection.js"></script>
+<script src="js/ui/marketSection.js"></script>
+<script src="js/ui/depositsSection.js"></script>
+<script src="js/ui/investmentsView.js"></script>
+<script src="js/ui/statsView.js"></script>
+<script src="js/ui/tabManager.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
