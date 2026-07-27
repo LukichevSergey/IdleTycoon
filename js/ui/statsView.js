@@ -51,6 +51,9 @@ class StatsView {
       ["Управляющему", Fmt.moneyShort(s.managerPaid)],
       ["Объектов куплено", state.ownedPropsCount],
       ["Время в игре", Fmt.dur(s.playTimeSec)],
+      ["Перерождений", state.prestigeCount],
+      ["Золотых монет", `🪙 ${state.gold}`],
+      ["Заработано за все жизни", Fmt.moneyShort(state.lifetime.earned + s.totalEarned)],
     ];
     this.grid.innerHTML = cards
       .map(([label, value, cls]) =>

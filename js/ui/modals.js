@@ -56,7 +56,7 @@ class TradeModal {
     document.getElementById("trade-max-buy").addEventListener("click", () => {
       const def = TRADE_ASSETS[this.id];
       const price = this.state.market.price(this.id);
-      let max = this.state.balance / (price * (1 + CONFIG.TRADE_FEE));
+      let max = this.state.balance / (price * (1 + this.state.tradeFee));
       if (def.kind === "bond") max = Math.min(max, this.state.bondsRemaining[this.id]);
       this.qtyInput.value = def.kind === "crypto" ? (Math.floor(max * 1e4) / 1e4) : Math.floor(max);
       this.refresh();
@@ -125,8 +125,10 @@ class TradeModal {
     document.getElementById("trade-extra").textContent =
       def.kind === "bond" ? `Осталось в размещении: ${Fmt.qty(this.state.bondsRemaining[this.id])} шт` : "";
 
-    const cost = qty * price * (1 + CONFIG.TRADE_FEE);
-    const proceeds = qty * price * (1 - CONFIG.TRADE_FEE);
+    const cost = qty * price * (1 + this.state.tradeFee);
+    const proceeds = qty * price * (1 - this.state.tradeFee);
+    document.querySelector("#trade-modal .fee-note").textContent =
+      `Комиссия брокера ${(this.state.tradeFee * 100).toFixed(1).replace(".", ",")}% на покупку и продажу`;
     const buyBtn = document.getElementById("trade-buy");
     const sellBtn = document.getElementById("trade-sell");
     buyBtn.textContent = qty > 0 ? `Купить за ${Fmt.moneyShort(cost)}` : "Купить";

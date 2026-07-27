@@ -56,7 +56,97 @@ class GameState extends EventEmitter {
     this.managerHired = false;
     this.market = new MarketSim(MARKET_ASSETS);
 
+    // Престиж: переживает перерождения, обнуляется только полным сбросом
+    this.gold = 0;            // золотые монеты
+    this.prestigeCount = 0;   // сколько раз перерождался
+    this.perks = {};          // perkId -> уровень (для once: 0/1)
+    this.lifetime = { earned: 0, playTimeSec: 0 }; // «вечная» статистика
+
     // TODO: достижения (this.achievements), бусты (this.boosts)
+  }
+
+  // ======================= ПРЕСТИЖ: ПЕРКИ И МНОЖИТЕЛИ =======================
+  perkLv(id) { return this.perks[id] || 0; }
+
+  /** Глобальный множитель дохода (аренда, купоны, дивиденды, вклады, клики) */
+  get incomeMult() {
+    return (1 + 0.1 * this.perkLv("grip"))
+      * (this.perkLv("empire") ? 1.5 : 1)
+      * (this.perkLv("legend") ? 2 : 1);
+  }
+  get rentMult() { return 1 + 0.15 * this.perkLv("realtor"); }
+  get investMult() { return 1 + 0.15 * this.perkLv("guru"); }
+  get offlineMult() { return 1 + 0.25 * this.perkLv("compound"); }
+  get clickMult() { return this.perkLv("goldclick") ? 5 : 1; }
+  get wearMult() { return this.perkLv("foreman") ? 0.7 : 1; }
+  get tradeFee() { return CONFIG.TRADE_FEE * (this.perkLv("broker") ? 1 / 3 : 1); }
+  get managerCut() { return this.perkLv("steward") ? 0.10 : CONFIG.MANAGER_CUT; }
+  get managerHireCost() { return this.perkLv("steward") ? 0 : CONFIG.MANAGER_HIRE_COST; }
+  get minOfferMult() { return this.perkLv("lawyer") ? 0.95 : CONFIG.RATE_RANGE[0]; }
+  get hasInsurance() { return this.perkLv("insurance") > 0; }
+  get hasInsider() { return this.perkLv("insider") > 0; }
+  /** Эффективная ставка вклада (%/ч, доля) с учётом «Банковского VIP» */
+  depositRate(d) { return d.rate + 0.01 * this.perkLv("vip"); }
+  /** Эффективный лимит вклада с учётом «Программы лояльности» */
+  depositMax(d) { return d.max * (this.perkLv("loyalty") ? 2 : 1); }
+  get startingBalance() {
+    return [CONFIG.STARTING_BALANCE, 5000, 20000, 75000, 250000, 1000000][this.perkLv("heir")];
+  }
+
+  /** Сколько монет даст перерождение при текущем капитале */
+  get pendingCoins() {
+    return Math.floor(Math.sqrt(Math.max(0, this.netWorth) / CONFIG.PRESTIGE_BASE_NW));
+  }
+  /** Капитал, необходимый для следующей монеты */
+  get nextCoinAt() {
+    return Math.pow(this.pendingCoins + 1, 2) * CONFIG.PRESTIGE_BASE_NW;
+  }
+
+  buyPerk(id) {
+    const def = PRESTIGE_BY_ID[id];
+    if (!def) return false;
+    const lv = this.perkLv(id);
+    if (lv >= def.costs.length) return false; // максимум
+    const cost = def.costs[lv];
+    if (this.gold < cost) return false;
+    this.gold -= cost;
+    this.perks[id] = lv + 1;
+    this.toast("success", `🪙 Куплено: ${def.name}${def.type === "level" ? ` (ур. ${lv + 1})` : ""}`);
+    this.structural("prestige");
+    this.emit("tick", { dt: 0 });
+    this.dirty();
+    return true;
+  }
+
+  /**
+   * Перерождение: текущий забег сгорает, монеты и перки остаются.
+   * Возвращает количество полученных монет (0 = условия не выполнены).
+   */
+  doPrestige() {
+    const coins = this.pendingCoins;
+    if (coins < 1) return 0;
+    this.gold += coins;
+    this.prestigeCount += 1;
+    this.lifetime.earned += this.stats.totalEarned;
+    this.lifetime.playTimeSec += this.stats.playTimeSec;
+
+    // Сброс забега (перки/монеты/lifetime не трогаем)
+    this.balance = this.startingBalance;
+    this.stats = freshStats();
+    PROPERTY_DEFS.forEach((d) => (this.props[d.id] = null));
+    this.portfolio = {};
+    BOND_DEFS.forEach((b) => (this.bondsRemaining[b.id] = b.issue));
+    this.bondDefault = {};
+    DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
+    this.managerHired = false;
+    this.market = new MarketSim(MARKET_ASSETS);
+
+    this.toast("success", `👑 Перерождение! Получено монет: ${coins} 🪙`);
+    this.structural("all");
+    this.emit("market");
+    this.emit("tick", { dt: 0 });
+    this.dirty();
+    return coins;
   }
 
   // ======================= ВСПОМОГАТЕЛЬНОЕ =======================
@@ -71,16 +161,17 @@ class GameState extends EventEmitter {
   }
 
   // ======================= ДОХОДЫ (₽/сек) =======================
-  /** Грязная аренда объекта (до комиссии управляющего) */
+  /** Грязная аренда объекта (до комиссии управляющего), с перками престижа */
   propGrossRent(id) {
     const p = this.props[id];
     if (!p || !p.lease) return 0;
     const def = PROP_BY_ID[id];
-    return def.rent * CONFIG.UPGRADE_MULTS[p.lv] * condMult(p.cond) * p.lease.mult;
+    return def.rent * CONFIG.UPGRADE_MULTS[p.lv] * condMult(p.cond) * p.lease.mult
+      * this.incomeMult * this.rentMult;
   }
   /** Чистая аренда объекта (после комиссии) */
   propNetRent(id) {
-    return this.propGrossRent(id) * (this.managerHired ? 1 - CONFIG.MANAGER_CUT : 1);
+    return this.propGrossRent(id) * (this.managerHired ? 1 - this.managerCut : 1);
   }
   get rentPerSec() {
     return PROPERTY_DEFS.reduce((s, d) => s + this.propNetRent(d.id), 0);
@@ -91,21 +182,21 @@ class GameState extends EventEmitter {
       const pos = this.portfolio[b.id];
       if (!pos || !pos.qty || this.bondDefault[b.id] > now) return s;
       return s + (pos.qty * b.face * b.coupon) / 3600;
-    }, 0);
+    }, 0) * this.incomeMult * this.investMult;
   }
   get divPerSec() {
     return STOCK_DEFS.reduce((s, d) => {
       const pos = this.portfolio[d.id];
       if (!pos || !pos.qty || !d.div) return s;
       return s + (pos.qty * this.market.price(d.id) * d.div) / 3600;
-    }, 0);
+    }, 0) * this.incomeMult * this.investMult;
   }
   get depositPerSec() {
     return DEPOSIT_DEFS.reduce((s, d) => {
       const dep = this.deposits[d.id];
       if (!dep || d.termH !== 0) return s; // срочные платят в конце срока
-      return s + (dep.principal * d.rate) / 3600;
-    }, 0);
+      return s + (dep.principal * this.depositRate(d)) / 3600;
+    }, 0) * this.incomeMult;
   }
   get incomePerSec() {
     return this.rentPerSec + this.couponPerSec + this.divPerSec + this.depositPerSec;
@@ -156,14 +247,15 @@ class GameState extends EventEmitter {
 
       if (p.lease) {
         const gross = this.propGrossRent(def.id);
-        const cut = this.managerHired ? gross * CONFIG.MANAGER_CUT : 0;
+        const cut = this.managerHired ? gross * this.managerCut : 0;
         const inc = (gross - cut) * dt;
         this.balance += inc;
         this.stats.rentEarned += inc;
         this.stats.totalEarned += inc;
         this.stats.managerPaid += cut * dt;
 
-        const wear = (CONFIG.WEAR_LEASED_PER_HOUR * (1 - CONFIG.WEAR_LEVEL_DISCOUNT * p.lv)) / 3600;
+        const wear = (CONFIG.WEAR_LEASED_PER_HOUR * (1 - CONFIG.WEAR_LEVEL_DISCOUNT * p.lv))
+          / 3600 * this.wearMult;
         p.cond = Math.max(0, p.cond - wear * dt);
 
         if (now >= p.lease.end) {
@@ -174,7 +266,7 @@ class GameState extends EventEmitter {
           this.dirty();
         }
       } else {
-        p.cond = Math.max(0, p.cond - (CONFIG.WEAR_VACANT_PER_HOUR / 3600) * dt);
+        p.cond = Math.max(0, p.cond - (CONFIG.WEAR_VACANT_PER_HOUR / 3600) * this.wearMult * dt);
 
         if (this.managerHired) {
           if (p.autoLeaseAt && now >= p.autoLeaseAt) {
@@ -197,10 +289,11 @@ class GameState extends EventEmitter {
     }
 
     // --- Купоны облигаций (непрерывное начисление; дефолт замораживает) ---
+    const investAll = this.incomeMult * this.investMult;
     for (const b of BOND_DEFS) {
       const pos = this.portfolio[b.id];
       if (!pos || !pos.qty || this.bondDefault[b.id] > now) continue;
-      const inc = ((pos.qty * b.face * b.coupon) / 3600) * dt;
+      const inc = ((pos.qty * b.face * b.coupon) / 3600) * investAll * dt;
       this.balance += inc;
       this.stats.couponEarned += inc;
       this.stats.totalEarned += inc;
@@ -211,7 +304,7 @@ class GameState extends EventEmitter {
       if (!d.div) continue;
       const pos = this.portfolio[d.id];
       if (!pos || !pos.qty) continue;
-      const inc = ((pos.qty * this.market.price(d.id) * d.div) / 3600) * dt;
+      const inc = ((pos.qty * this.market.price(d.id) * d.div) / 3600) * investAll * dt;
       this.balance += inc;
       this.stats.divEarned += inc;
       this.stats.totalEarned += inc;
@@ -222,9 +315,9 @@ class GameState extends EventEmitter {
       const dep = this.deposits[d.id];
       if (!dep) continue;
       if (d.termH === 0) {
-        dep.accrued += ((dep.principal * d.rate) / 3600) * dt;
+        dep.accrued += ((dep.principal * this.depositRate(d)) / 3600) * this.incomeMult * dt;
       } else if (now >= dep.maturesAt) {
-        const interest = dep.principal * d.rate * d.termH;
+        const interest = dep.principal * this.depositRate(d) * d.termH * this.incomeMult;
         this.balance += dep.principal + interest;
         this.stats.depositEarned += interest;
         this.stats.totalEarned += interest;
@@ -263,7 +356,8 @@ class GameState extends EventEmitter {
   _makeOffer(def, now) {
     return {
       tenant: this._tenantFor(def),
-      mult: Math.round(U.rand(...CONFIG.RATE_RANGE) * 100) / 100,
+      // «Личный юрист» поднимает нижнюю границу ставки
+      mult: Math.round(U.rand(this.minOfferMult, CONFIG.RATE_RANGE[1]) * 100) / 100,
       hours: Math.round(U.rand(...CONFIG.LEASE_HOURS) * 2) / 2,
       expires: now + CONFIG.OFFER_TTL * 1000,
     };
@@ -353,9 +447,9 @@ class GameState extends EventEmitter {
   }
 
   hireManager() {
-    if (this.managerHired || this.balance < CONFIG.MANAGER_HIRE_COST) return false;
-    this.balance -= CONFIG.MANAGER_HIRE_COST;
-    this.stats.managerPaid += CONFIG.MANAGER_HIRE_COST;
+    if (this.managerHired || this.balance < this.managerHireCost) return false;
+    this.balance -= this.managerHireCost;
+    this.stats.managerPaid += this.managerHireCost;
     this.managerHired = true;
     const now = Date.now();
     PROPERTY_DEFS.forEach((d) => {
@@ -395,7 +489,7 @@ class GameState extends EventEmitter {
         return false;
       }
       const cost = qty * price;
-      const fee = cost * CONFIG.TRADE_FEE;
+      const fee = cost * this.tradeFee;
       if (this.balance < cost + fee) return false;
       this.balance -= cost + fee;
       this.stats.feesPaid += fee;
@@ -410,7 +504,7 @@ class GameState extends EventEmitter {
       const pos = this.portfolio[id];
       if (!pos || pos.qty < qty - 1e-9) return false;
       const proceeds = qty * price;
-      const fee = proceeds * CONFIG.TRADE_FEE;
+      const fee = proceeds * this.tradeFee;
       const net = proceeds - fee;
       this.balance += net;
       this.stats.feesPaid += fee;
@@ -435,8 +529,8 @@ class GameState extends EventEmitter {
 
     if (d.termH === 0) {
       const cur = dep ? dep.principal : 0;
-      if (cur + amount > d.max) {
-        this.toast("warn", `Лимит вклада — ${Fmt.moneyShort(d.max)}`);
+      if (cur + amount > this.depositMax(d)) {
+        this.toast("warn", `Лимит вклада — ${Fmt.moneyShort(this.depositMax(d))}`);
         return false;
       }
       this.balance -= amount;
@@ -447,8 +541,8 @@ class GameState extends EventEmitter {
         this.toast("warn", "Этот вклад уже открыт");
         return false;
       }
-      if (amount > d.max) {
-        this.toast("warn", `Лимит вклада — ${Fmt.moneyShort(d.max)}`);
+      if (amount > this.depositMax(d)) {
+        this.toast("warn", `Лимит вклада — ${Fmt.moneyShort(this.depositMax(d))}`);
         return false;
       }
       this.balance -= amount;
@@ -488,7 +582,8 @@ class GameState extends EventEmitter {
 
   // ======================= «СДЕЛКА» НА ГЛАВНОЙ =======================
   clickDeal() {
-    const gain = CONFIG.CLICK_BASE + this.incomePerSec * CONFIG.CLICK_INCOME_SECONDS;
+    const gain = (CONFIG.CLICK_BASE * this.incomeMult
+      + this.incomePerSec * CONFIG.CLICK_INCOME_SECONDS) * this.clickMult;
     this.balance += gain;
     this.stats.clickEarned += gain;
     this.stats.totalEarned += gain;
@@ -518,7 +613,8 @@ class GameState extends EventEmitter {
           this.structural("portfolio");
         } },
     ];
-    if (ownedDefs.length) {
+    // «Страховка» из магазина престижа полностью исключает аварии
+    if (ownedDefs.length && !this.hasInsurance) {
       events.push({ w: 2, run: () => {
         const d = U.choice(ownedDefs);
         const p = this.props[d.id];
@@ -568,11 +664,13 @@ class GameState extends EventEmitter {
             continue;
           }
           const seg = Math.min(leaseLeft, T - t, 1800); // интегрируем кусками по 30 мин
-          const gross = def.rent * CONFIG.UPGRADE_MULTS[p.lv] * condMult(p.cond) * p.lease.mult;
-          const cut = this.managerHired ? gross * CONFIG.MANAGER_CUT : 0;
+          const gross = def.rent * CONFIG.UPGRADE_MULTS[p.lv] * condMult(p.cond) * p.lease.mult
+            * this.incomeMult * this.rentMult;
+          const cut = this.managerHired ? gross * this.managerCut : 0;
           rep.rent += (gross - cut) * seg;
           this.stats.managerPaid += cut * seg;
-          const wear = (CONFIG.WEAR_LEASED_PER_HOUR * (1 - CONFIG.WEAR_LEVEL_DISCOUNT * p.lv)) / 3600;
+          const wear = (CONFIG.WEAR_LEASED_PER_HOUR * (1 - CONFIG.WEAR_LEVEL_DISCOUNT * p.lv))
+            / 3600 * this.wearMult;
           p.cond = Math.max(0, p.cond - wear * seg);
           t += seg;
         } else if (this.managerHired && p.autoLeaseAt) {
@@ -594,15 +692,16 @@ class GameState extends EventEmitter {
     }
 
     // --- купоны и дивиденды (аппроксимация по текущим ценам) ---
+    const investAll = this.incomeMult * this.investMult;
     for (const b of BOND_DEFS) {
       const pos = this.portfolio[b.id];
       if (!pos || !pos.qty || this.bondDefault[b.id] > now) continue;
-      rep.coupons += ((pos.qty * b.face * b.coupon) / 3600) * T;
+      rep.coupons += ((pos.qty * b.face * b.coupon) / 3600) * investAll * T;
     }
     for (const d of STOCK_DEFS) {
       const pos = this.portfolio[d.id];
       if (!pos || !pos.qty || !d.div) continue;
-      rep.divs += ((pos.qty * this.market.price(d.id) * d.div) / 3600) * T;
+      rep.divs += ((pos.qty * this.market.price(d.id) * d.div) / 3600) * investAll * T;
     }
 
     // --- вклады ---
@@ -611,15 +710,19 @@ class GameState extends EventEmitter {
       const dep = this.deposits[d.id];
       if (!dep) continue;
       if (d.termH === 0) {
-        dep.accrued += ((dep.principal * d.rate) / 3600) * T;
+        dep.accrued += ((dep.principal * this.depositRate(d)) / 3600) * this.incomeMult * T;
       } else if (now >= dep.maturesAt) {
-        const interest = dep.principal * d.rate * d.termH;
+        const interest = dep.principal * this.depositRate(d) * d.termH * this.incomeMult;
         depositInterest += interest;
         rep.deposits += dep.principal + interest;
         this.deposits[d.id] = null;
       }
     }
 
+    // «Сложный процент»: бонус к заработанному офлайн (тело вкладов не трогаем)
+    rep.rent *= this.offlineMult;
+    rep.coupons *= this.offlineMult;
+    rep.divs *= this.offlineMult;
     rep.total = rep.rent + rep.coupons + rep.divs + rep.deposits;
     this.balance += rep.total;
     this.stats.rentEarned += rep.rent;
@@ -671,6 +774,10 @@ class GameState extends EventEmitter {
       deposits: this.deposits,
       managerHired: this.managerHired,
       market: this.market.serialize(),
+      gold: this.gold,
+      prestigeCount: this.prestigeCount,
+      perks: this.perks,
+      lifetime: this.lifetime,
     };
   }
 
@@ -703,11 +810,14 @@ class GameState extends EventEmitter {
     }
     this.managerHired = !!data.managerHired;
     this.market.load(data.market);
+    this.gold = data.gold || 0;
+    this.prestigeCount = data.prestigeCount || 0;
+    this.perks = data.perks || {};
+    this.lifetime = { earned: 0, playTimeSec: 0, ...(data.lifetime || {}) };
     this.emit("tick", { dt: 0 });
   }
 
-  /** Полный сброс прогресса.
-   *  // TODO: prestige — вместо сброса начислять постоянный множитель */
+  /** Полный сброс прогресса — стирает и престиж (перерождение — doPrestige) */
   reset() {
     this.balance = CONFIG.STARTING_BALANCE;
     this.stats = freshStats();
@@ -718,6 +828,10 @@ class GameState extends EventEmitter {
     DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
     this.managerHired = false;
     this.market = new MarketSim(MARKET_ASSETS);
+    this.gold = 0;
+    this.prestigeCount = 0;
+    this.perks = {};
+    this.lifetime = { earned: 0, playTimeSec: 0 };
     this.structural("all");
     this.emit("market");
     this.emit("tick", { dt: 0 });

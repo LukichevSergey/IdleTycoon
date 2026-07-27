@@ -18,6 +18,7 @@ class HomeView {
         </div>
         <div class="income-breakdown" id="income-breakdown"></div>
         <div class="networth-line">Собственный капитал: <b id="networth-value">—</b></div>
+        <div class="networth-line hidden" id="gold-line"></div>
         <button class="deal-btn" id="deal-btn">🤝 Заключить сделку</button>
         <div class="alert-line hidden" id="vacant-alert"></div>
       </div>
@@ -27,7 +28,10 @@ class HomeView {
     this.incomeEl = container.querySelector("#income-value");
     this.breakdownEl = container.querySelector("#income-breakdown");
     this.networthEl = container.querySelector("#networth-value");
+    this.goldEl = container.querySelector("#gold-line");
     this.alertEl = container.querySelector("#vacant-alert");
+    this.goldEl.style.cursor = "pointer";
+    this.goldEl.addEventListener("click", () => this.goto("prestige"));
 
     const dealBtn = container.querySelector("#deal-btn");
     dealBtn.addEventListener("click", () => {
@@ -57,6 +61,16 @@ class HomeView {
     if (s.depositPerSec > 0) parts.push(`вклад ${Fmt.money(s.depositPerSec)}/с`);
     this.breakdownEl.textContent = parts.join(" · ");
     this.networthEl.textContent = Fmt.moneyShort(s.netWorth);
+
+    // Подсказка о престиже, когда есть монеты или доступно перерождение
+    const pending = s.pendingCoins;
+    if (s.gold > 0 || pending >= 1 || s.prestigeCount > 0) {
+      this.goldEl.innerHTML = `🪙 <b>${s.gold}</b>` +
+        (pending >= 1 ? ` · перерождение даст <b>+${pending} 🪙</b>` : "");
+      this.goldEl.classList.remove("hidden");
+    } else {
+      this.goldEl.classList.add("hidden");
+    }
 
     const vacant = s.vacantPropsCount;
     if (vacant > 0) {

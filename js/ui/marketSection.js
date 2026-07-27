@@ -117,12 +117,23 @@ class MarketSection {
       row.chg.className = "m-chg " + (chg >= 0 ? "pos" : "neg");
       row.spark.innerHTML = sparkSVG(s.market.history(def.id));
 
+      // Перк «Инсайдер»: подсказка, дешевле или дороже бумага «справедливой» цены
+      let insiderBadge = "";
+      if (s.hasInsider) {
+        const mood = s.market.mood(def.id);
+        if (mood < 0.92) insiderBadge = ` <span class="chip insider-cheap">недооценена</span>`;
+        else if (mood > 1.15) insiderBadge = ` <span class="chip insider-dear">переоценена</span>`;
+      }
+
       // бейджи облигаций: остаток размещения / дефолт
       if (this.kind === "bond") {
         const defaulted = s.bondDefault[def.id] > now;
         row.sub.innerHTML = `${row.baseSub} · осталось ${Fmt.qty(s.bondsRemaining[def.id])} шт`
           + (defaulted ? ` <span class="chip defaulted">ДЕФОЛТ</span>` : "")
-          + (def.risky && !defaulted ? ` <span class="chip defaulted">риск</span>` : "");
+          + (def.risky && !defaulted ? ` <span class="chip defaulted">риск</span>` : "")
+          + insiderBadge;
+      } else if (s.hasInsider) {
+        row.sub.innerHTML = row.baseSub + insiderBadge;
       }
 
       const pos = s.portfolio[def.id];

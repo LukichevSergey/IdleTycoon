@@ -18,6 +18,8 @@ class MarketSim {
 
   price(id) { return this.s[id].price; }
   history(id) { return this.s[id].history; }
+  /** Настроение (price / anchor): <1 — бумага дешевле «справедливой» цены */
+  mood(id) { return this.s[id].mood; }
 
   /** Изменение цены за окно спарклайна (~3 мин), в процентах */
   changePct(id) {

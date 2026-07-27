@@ -63,10 +63,11 @@ class StorageManager {
   }
 
   /**
-   * Миграции между версиями сейва.
+   * Миграции между версиями сейва (выполняются по цепочке).
    * v1 -> v2: старые 4 обезличенных актива упразднены; игроку полностью
    * возвращаются потраченные на них деньги (компенсация).
-   * // TODO: при изменении структуры добавить шаг v2 -> v3 по образцу
+   * v2 -> v3: добавлен престиж (монеты, перки, счётчик перерождений).
+   * // TODO: при изменении структуры добавить шаг v3 -> v4 по образцу
    */
   _migrate(data) {
     if (typeof data.version !== "number") data.version = 1;
@@ -82,6 +83,13 @@ class StorageManager {
           startedAt: data.stats?.startedAt || Date.now(),
         },
       };
+    }
+    if (data.version === 2) {
+      data.version = 3;
+      data.gold = 0;
+      data.prestigeCount = 0;
+      data.perks = {};
+      data.lifetime = { earned: 0, playTimeSec: 0 };
     }
     return data;
   }

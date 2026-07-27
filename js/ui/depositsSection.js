@@ -56,7 +56,7 @@ class DepositsSection {
           </div>
         `;
       } else {
-        const interest = dep.principal * d.rate * d.termH;
+        const interest = dep.principal * this.state.depositRate(d) * d.termH * this.state.incomeMult;
         body = `
           <div class="prop-meta">
             <span class="label">Внесено</span><span class="value" data-r="principal">${Fmt.money(dep.principal)}</span>
@@ -73,7 +73,7 @@ class DepositsSection {
           <div class="prop-name">${d.name}</div>
           <span class="chip">${termLabel}</span>
         </div>
-        <div class="rate">${(d.rate * 100).toFixed(0)}% <span class="per">в час · лимит ${Fmt.moneyShort(d.max)}</span></div>
+        <div class="rate">${(this.state.depositRate(d) * 100).toFixed(0)}% <span class="per">в час · лимит ${Fmt.moneyShort(this.state.depositMax(d))}</span></div>
         <div class="prop-desc">${d.desc}</div>
         ${body}
       `;
@@ -82,7 +82,8 @@ class DepositsSection {
       const r = (name) => card.querySelector(`[data-r="${name}"]`);
       const amountInput = r("amount");
       const fillPct = (pct) => {
-        const room = Math.min(this.state.balance, d.max - (dep && d.termH === 0 ? dep.principal : 0));
+        const room = Math.min(this.state.balance,
+          this.state.depositMax(d) - (dep && d.termH === 0 ? dep.principal : 0));
         amountInput.value = Math.max(0, Math.floor(room * pct));
       };
       if (r("q25")) r("q25").addEventListener("click", () => fillPct(0.25));

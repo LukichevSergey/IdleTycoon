@@ -429,6 +429,20 @@ html, body {
   to { opacity: 0; transform: translateX(30px); }
 }
 
+/* ---------- Престиж ---------- */
+.gold-text { color: var(--accent-gold); }
+.prestige-card {
+  background: linear-gradient(160deg, var(--bg-card), var(--bg-elevated));
+  border: 1px solid var(--accent-gold-dim);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.prestige-head { font-size: 16px; font-weight: 800; color: var(--accent-gold); }
+.chip.insider-cheap { color: var(--accent-green); border-color: var(--accent-green); }
+.chip.insider-dear { color: var(--accent-red); border-color: var(--danger); }
+
 /* ---------- Статистика ---------- */
 .stats-grid {
   display: grid;
