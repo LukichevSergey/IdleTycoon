@@ -61,11 +61,73 @@
 <!-- Классические скрипты (не ES-модули), чтобы игра открывалась и с file://
      двойным кликом, и с github.io. ПОРЯДОК ПОДКЛЮЧЕНИЯ ВАЖЕН:
      конфиг → утилиты → данные → ядро → UI → точка сборки. -->
+<!-- Модальное окно открытия валютной позиции (Форекс) -->
+<div class="modal-overlay" id="fx-modal">
+  <div class="modal">
+    <button class="close-x" id="fx-close">✕</button>
+    <h2 id="fx-title">—</h2>
+    <div class="m-line" id="fx-desc">—</div>
+
+    <div class="fx-quote-row">
+      <div>Bid <b id="fx-bid">—</b></div>
+      <div>Ask <b id="fx-ask">—</b></div>
+      <div class="muted">спред <b id="fx-spread">—</b></div>
+    </div>
+
+    <div class="fx-dir-row">
+      <button class="btn-sm fx-dir active" id="fx-dir-buy">▲ Купить (лонг)</button>
+      <button class="btn-sm fx-dir" id="fx-dir-sell">▼ Продать (шорт)</button>
+    </div>
+
+    <div class="fx-field">
+      <div class="fx-label">Объём, лотов <span class="muted">(1 лот = 100 000 ₽)</span></div>
+      <div class="dep-form">
+        <input type="number" class="num-input" id="fx-lots" min="0.01" step="0.01" value="0.1">
+        <button class="btn-sm" data-lots="0.25">25%</button>
+        <button class="btn-sm" data-lots="0.5">50%</button>
+        <button class="btn-sm" data-lots="1">Макс</button>
+      </div>
+    </div>
+
+    <div class="fx-field">
+      <div class="fx-label">Кредитное плечо</div>
+      <div class="row-btns" id="fx-levs"></div>
+    </div>
+
+    <div class="fx-field">
+      <div class="fx-label">Защита позиции <span class="muted">(работает и офлайн)</span></div>
+      <div class="dep-form">
+        <input type="number" class="num-input" id="fx-sl" placeholder="Стоп-лосс" step="0.0001">
+        <button class="btn-sm" data-sl="1">−1%</button>
+        <button class="btn-sm" data-sl="3">−3%</button>
+      </div>
+      <div class="dep-form">
+        <input type="number" class="num-input" id="fx-tp" placeholder="Тейк-профит" step="0.0001">
+        <button class="btn-sm" data-tp="2">+2%</button>
+        <button class="btn-sm" data-tp="5">+5%</button>
+        <button class="btn-sm" id="fx-clear-protect">Сбросить</button>
+      </div>
+    </div>
+
+    <div class="prop-meta fx-summary">
+      <span class="label">Объём позиции</span><span class="value" id="fx-notional">—</span>
+      <span class="label">Залог (маржа)</span><span class="value" id="fx-margin">—</span>
+      <span class="label">Стоп-аут при</span><span class="value" id="fx-liq">—</span>
+      <span class="label">Своп</span><span class="value" id="fx-swap-info">—</span>
+      <span class="label">Убыток по стопу</span><span class="value" id="fx-sl-res">—</span>
+      <span class="label">Прибыль по тейку</span><span class="value" id="fx-tp-res">—</span>
+    </div>
+
+    <div class="modal-actions"><button class="buy-btn" id="fx-submit">Открыть позицию</button></div>
+  </div>
+</div>
+
 <script src="js/config.js"></script>
 <script src="js/core/utils.js"></script>
 <script src="js/core/eventEmitter.js"></script>
 <script src="js/data/properties.js"></script>
 <script src="js/data/market.js"></script>
+<script src="js/data/forex.js"></script>
 <script src="js/data/deposits.js"></script>
 <script src="js/data/prestige.js"></script>
 <script src="js/data/businesses.js"></script>
@@ -77,6 +139,8 @@
 <script src="js/ui/homeView.js"></script>
 <script src="js/ui/realtySection.js"></script>
 <script src="js/ui/marketSection.js"></script>
+<script src="js/ui/forexModal.js"></script>
+<script src="js/ui/forexSection.js"></script>
 <script src="js/ui/depositsSection.js"></script>
 <script src="js/ui/investmentsView.js"></script>
 <script src="js/ui/businessView.js"></script>

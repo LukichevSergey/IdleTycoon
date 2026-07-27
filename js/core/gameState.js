@@ -13,6 +13,10 @@ function freshStats() {
     depositEarned: 0,
     clickEarned: 0,
     tradeProfit: 0,   // реализованный P&L трейдинга (может быть отрицательным)
+    fxProfit: 0,      // реализованный P&L форекса (может быть отрицательным)
+    fxSwap: 0,        // накопленные свопы (обычно отрицательные)
+    fxTrades: 0,
+    fxStopOuts: 0,
     feesPaid: 0,
     repairSpent: 0,
     upgradeSpent: 0,
@@ -55,7 +59,12 @@ class GameState extends EventEmitter {
     DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
 
     this.managerHired = false;
-    this.market = new MarketSim(MARKET_ASSETS);
+    // Симулятор считает и спотовые инструменты, и валютные пары
+    this.market = new MarketSim(ALL_SIM_ASSETS);
+
+    // Форекс: маржинальные позиции (у них своя структура, не portfolio)
+    this.fx = {};       // posId -> позиция
+    this.fxNextId = 1;
 
     // Бизнесы: id -> null (не открыт) | состояние бизнеса
     this.businesses = {};
@@ -150,7 +159,8 @@ class GameState extends EventEmitter {
     DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
     this.managerHired = false;
     BUSINESS_DEFS.forEach((d) => (this.businesses[d.id] = null));
-    this.market = new MarketSim(MARKET_ASSETS);
+    this.fx = {};
+    this.market = new MarketSim(ALL_SIM_ASSETS);
 
     this.toast("success", `👑 Перерождение! Получено монет: ${coins} 🪙`);
     this.structural("all");
@@ -644,7 +654,7 @@ class GameState extends EventEmitter {
   }
   get netWorth() {
     return this.balance + this.propsInvested + this.portfolioValue()
-      + this.depositsTotal + this.bizInvested;
+      + this.depositsTotal + this.bizInvested + this.fxEquity;
   }
   get ownedPropsCount() {
     return PROPERTY_DEFS.filter((d) => this.props[d.id]).length;
@@ -748,6 +758,8 @@ class GameState extends EventEmitter {
 
     // --- Бизнесы ---
     const structuralBiz = this._bizTick(dt, now);
+    // --- Форекс: свопы, стоп-лоссы, тейк-профиты, стоп-ауты ---
+    this._fxTick(dt, now);
 
     this.stats.playTimeSec += dt;
     if (structuralRealty) this.structural("realty");
@@ -943,6 +955,144 @@ class GameState extends EventEmitter {
     return true;
   }
 
+  // ======================= ФОРЕКС =======================
+  /** Спред в долях от цены (перк «Валютный дилер» его сужает) */
+  fxSpreadFrac(id) {
+    const def = FX_BY_ID[id];
+    const price = this.market.price(id);
+    const perk = this.perkLv("dealer") ? 0.6 : 1;
+    return ((def.spreadPips * def.pip) / price) * perk;
+  }
+  /** Цена продажи (bid) — по ней закрывают лонг и открывают шорт */
+  fxBid(id) { return this.market.price(id) * (1 - this.fxSpreadFrac(id) / 2); }
+  /** Цена покупки (ask) — по ней открывают лонг и закрывают шорт */
+  fxAsk(id) { return this.market.price(id) * (1 + this.fxSpreadFrac(id) / 2); }
+
+  /** Доступные плечи для пары (ограничены её maxLev) */
+  fxLeverages(id) {
+    return CONFIG.FX_LEVERAGES.filter((l) => l <= FX_BY_ID[id].maxLev);
+  }
+
+  /**
+   * Плавающий результат позиции без свопа.
+   * Лонг открыт по ask и закрывается по bid, шорт — наоборот, поэтому
+   * спред уже «зашит» в расчёт и отдельной комиссии не нужно.
+   */
+  fxPnL(pos) {
+    const close = pos.dir > 0 ? this.fxBid(pos.pair) : this.fxAsk(pos.pair);
+    return pos.notional * ((close - pos.entry) / pos.entry) * pos.dir;
+  }
+  /** Итог позиции с учётом накопленного свопа */
+  fxTotal(pos) { return this.fxPnL(pos) + pos.swap; }
+
+  get fxPositions() { return Object.values(this.fx); }
+  /** Сумма залогов всех открытых позиций (эти деньги заморожены) */
+  get fxMarginUsed() { return this.fxPositions.reduce((s, p) => s + p.margin, 0); }
+  /** Плавающий результат по всем позициям */
+  get fxFloating() { return this.fxPositions.reduce((s, p) => s + this.fxTotal(p), 0); }
+  /** Капитал, «стоящий» в форексе: залоги плюс плавающий результат */
+  get fxEquity() { return this.fxMarginUsed + this.fxFloating; }
+
+  /**
+   * Открыть позицию.
+   * @param {string} pairId
+   * @param {1|-1} dir  1 — покупка (лонг), -1 — продажа (шорт)
+   * @param {number} lots объём в лотах (1 лот = CONFIG.FX_LOT ₽)
+   * @param {number} lev  кредитное плечо
+   * @param {number} sl   цена стоп-лосса (0 — не задан)
+   * @param {number} tp   цена тейк-профита (0 — не задан)
+   */
+  openFxPosition(pairId, dir, lots, lev, sl = 0, tp = 0) {
+    const def = FX_BY_ID[pairId];
+    if (!def || !(lots >= CONFIG.FX_MIN_LOTS)) return false;
+    if (this.fxPositions.length >= CONFIG.FX_MAX_POSITIONS) {
+      this.toast("warn", `Больше ${CONFIG.FX_MAX_POSITIONS} открытых позиций нельзя`);
+      return false;
+    }
+    lev = U.clamp(lev, 1, def.maxLev);
+    const notional = lots * CONFIG.FX_LOT;
+    const margin = notional / lev;
+    if (this.balance < margin) return false;
+
+    const entry = dir > 0 ? this.fxAsk(pairId) : this.fxBid(pairId);
+    // Стоп-лосс/тейк-профит должны стоять по правильную сторону от цены,
+    // иначе позиция закрылась бы в тот же миг
+    if (sl > 0 && ((dir > 0 && sl >= entry) || (dir < 0 && sl <= entry))) sl = 0;
+    if (tp > 0 && ((dir > 0 && tp <= entry) || (dir < 0 && tp >= entry))) tp = 0;
+
+    this.balance -= margin;
+    const id = this.fxNextId++;
+    this.fx[id] = { id, pair: pairId, dir, lots, notional, lev, margin, entry, sl, tp, swap: 0, openedAt: Date.now() };
+    this.stats.fxTrades += 1;
+    this.toast("success",
+      `${dir > 0 ? "▲ Покупка" : "▼ Продажа"} ${def.ticker} · ${lots} лот(ов) · плечо 1:${lev}`);
+    this.structural("forex");
+    this.dirty();
+    return true;
+  }
+
+  /** Закрыть позицию. reason: 'manual' | 'sl' | 'tp' | 'stopout' */
+  closeFxPosition(posId, reason = "manual", silent = false) {
+    const pos = this.fx[posId];
+    if (!pos) return 0;
+    const def = FX_BY_ID[pos.pair];
+    const pnl = this.fxPnL(pos);
+    const total = pnl + pos.swap;
+
+    // Больше залога потерять нельзя — так работает стоп-аут у брокера
+    const payout = Math.max(0, pos.margin + total);
+    this.balance += payout;
+    this.stats.fxProfit += total;
+    this.stats.fxSwap += pos.swap;
+    if (total > 0) this.stats.totalEarned += total;
+    if (reason === "stopout") this.stats.fxStopOuts += 1;
+    delete this.fx[posId];
+
+    if (!silent) {
+      const label = { manual: "Закрыто", sl: "🛑 Стоп-лосс", tp: "🎯 Тейк-профит", stopout: "💥 Стоп-аут" }[reason];
+      this.toast(total >= 0 ? "success" : (reason === "stopout" ? "danger" : "warn"),
+        `${label}: ${def.ticker} ${total >= 0 ? "+" : ""}${Fmt.money(total)}`);
+    }
+    this.structural("forex");
+    this.dirty();
+    return total;
+  }
+
+  closeAllFxPositions() {
+    this.fxPositions.forEach((p) => this.closeFxPosition(p.id, "manual", true));
+    this.toast("info", "Все валютные позиции закрыты");
+    return true;
+  }
+
+  /**
+   * Тик форекса: начисление свопов и срабатывание условий закрытия.
+   * Порядок проверок как у брокера: сперва защитные ордера, затем стоп-аут.
+   */
+  _fxTick(dt, now) {
+    let structural = false;
+    for (const pos of this.fxPositions) {
+      const def = FX_BY_ID[pos.pair];
+      const rate = pos.dir > 0 ? def.swapLong : def.swapShort;
+      pos.swap += pos.notional * (rate / 100) * (dt / 3600);
+
+      const bid = this.fxBid(pos.pair);
+      const ask = this.fxAsk(pos.pair);
+      const close = pos.dir > 0 ? bid : ask;
+
+      if (pos.sl > 0 && ((pos.dir > 0 && close <= pos.sl) || (pos.dir < 0 && close >= pos.sl))) {
+        this.closeFxPosition(pos.id, "sl");
+        structural = true;
+      } else if (pos.tp > 0 && ((pos.dir > 0 && close >= pos.tp) || (pos.dir < 0 && close <= pos.tp))) {
+        this.closeFxPosition(pos.id, "tp");
+        structural = true;
+      } else if (this.fxTotal(pos) <= -pos.margin * CONFIG.FX_STOPOUT) {
+        this.closeFxPosition(pos.id, "stopout");
+        structural = true;
+      }
+    }
+    return structural;
+  }
+
   // ======================= ДЕЙСТВИЯ: ВКЛАДЫ =======================
   openDeposit(prodId, amount) {
     const d = DEP_BY_ID[prodId];
@@ -1045,6 +1195,27 @@ class GameState extends EventEmitter {
         this.structural("realty");
       } });
     }
+    // Валютные события бьют по форекс-парам: с плечом это чувствуется резко
+    const fxMajors = FOREX_DEFS.filter((d) => d.cls === "Мажор");
+    const fxExotics = FOREX_DEFS.filter((d) => d.cls === "Экзотика");
+    events.push(
+      { w: 2, run: () => {
+          const d = U.choice(fxMajors);
+          const up = Math.random() < 0.5;
+          this.market.shock(d.id, up ? U.rand(1.02, 1.05) : U.rand(0.95, 0.98));
+          this.toast("info", `🏦 Центробанк меняет ставку: ${d.ticker} ${up ? "растёт" : "падает"}`);
+        } },
+      { w: 1.5, run: () => {
+          const d = U.choice(fxExotics);
+          this.market.shock(d.id, U.rand(0.80, 0.90));
+          this.toast("warn", `💸 Валютная интервенция: ${d.ticker} резко вниз`);
+        } },
+      { w: 1.5, run: () => {
+          const d = U.choice(fxExotics);
+          this.market.shock(d.id, U.rand(1.10, 1.25));
+          this.toast("danger", `🔥 Отток капитала: ${d.ticker} взлетает`);
+        } },
+    );
     // TODO: новые события — добавить в массив (шанс w — относительный вес)
 
     const total = events.reduce((s, e) => s + e.w, 0);
@@ -1065,7 +1236,7 @@ class GameState extends EventEmitter {
    */
   applyOffline(seconds, now = Date.now()) {
     const T = Math.min(seconds, CONFIG.OFFLINE_CAP_HOURS * 3600);
-    const rep = { seconds: T, rent: 0, coupons: 0, divs: 0, deposits: 0, business: 0, total: 0 };
+    const rep = { seconds: T, rent: 0, coupons: 0, divs: 0, deposits: 0, business: 0, total: 0, fxClosed: [] };
     const start = now - T * 1000;
 
     this.market.advance(T);
@@ -1194,6 +1365,28 @@ class GameState extends EventEmitter {
       }
     }
 
+    // --- форекс ---
+    // Точного пути цены за время отсутствия у нас нет, поэтому свопы
+    // начисляем честно за весь период, а защитные ордера и стоп-аут
+    // проверяем по итоговой цене. Это осознанное упрощение: сделка,
+    // которая «сходила» к стопу и вернулась, здесь уцелеет.
+    for (const pos of this.fxPositions) {
+      const def = FX_BY_ID[pos.pair];
+      const rate = pos.dir > 0 ? def.swapLong : def.swapShort;
+      pos.swap += pos.notional * (rate / 100) * (T / 3600);
+
+      const close = pos.dir > 0 ? this.fxBid(pos.pair) : this.fxAsk(pos.pair);
+      let reason = null;
+      if (pos.sl > 0 && ((pos.dir > 0 && close <= pos.sl) || (pos.dir < 0 && close >= pos.sl))) reason = "sl";
+      else if (pos.tp > 0 && ((pos.dir > 0 && close >= pos.tp) || (pos.dir < 0 && close <= pos.tp))) reason = "tp";
+      else if (this.fxTotal(pos) <= -pos.margin * CONFIG.FX_STOPOUT) reason = "stopout";
+      if (reason) {
+        const label = { sl: "стоп-лосс", tp: "тейк-профит", stopout: "стоп-аут" }[reason];
+        const total = this.closeFxPosition(pos.id, reason, true);
+        rep.fxClosed.push({ ticker: def.ticker, label, total });
+      }
+    }
+
     // «Сложный процент»: бонус к заработанному офлайн (тело вкладов не трогаем)
     rep.rent *= this.offlineMult;
     rep.coupons *= this.offlineMult;
@@ -1212,6 +1405,7 @@ class GameState extends EventEmitter {
     this.structural("deposits");
     this.structural("portfolio");
     this.structural("business");
+    this.structural("forex");
     this.emit("market");
     this.emit("tick", { dt: 0 });
     return rep;
@@ -1252,6 +1446,8 @@ class GameState extends EventEmitter {
       deposits: this.deposits,
       managerHired: this.managerHired,
       businesses: this.businesses,
+      fx: this.fx,
+      fxNextId: this.fxNextId,
       market: this.market.serialize(),
       gold: this.gold,
       prestigeCount: this.prestigeCount,
@@ -1293,6 +1489,8 @@ class GameState extends EventEmitter {
         if (data.businesses[d.id]) this.businesses[d.id] = data.businesses[d.id];
       });
     }
+    this.fx = data.fx || {};
+    this.fxNextId = data.fxNextId || (Math.max(0, ...Object.keys(this.fx).map(Number)) + 1);
     this.market.load(data.market);
     this.gold = data.gold || 0;
     this.prestigeCount = data.prestigeCount || 0;
@@ -1312,7 +1510,9 @@ class GameState extends EventEmitter {
     DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
     this.managerHired = false;
     BUSINESS_DEFS.forEach((d) => (this.businesses[d.id] = null));
-    this.market = new MarketSim(MARKET_ASSETS);
+    this.fx = {};
+    this.fxNextId = 1;
+    this.market = new MarketSim(ALL_SIM_ASSETS);
     this.gold = 0;
     this.prestigeCount = 0;
     this.perks = {};

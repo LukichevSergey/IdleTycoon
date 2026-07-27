@@ -37,12 +37,13 @@ class Game {
 
     // 2. UI
     this.tradeModal = new TradeModal(this.state);
+    this.forexModal = new ForexModal(this.state);
     const goto = (tabId, sectionId) => {
       this.tabManager.activate(tabId);
       if (sectionId) this.investmentsView.activate(sectionId);
     };
     this.homeView = new HomeView(this.state, goto);
-    this.investmentsView = new InvestmentsView(this.state, this.tradeModal);
+    this.investmentsView = new InvestmentsView(this.state, this.tradeModal, this.forexModal);
     this.businessView = new BusinessView(this.state);
     this.prestigeView = new PrestigeView(this.state);
     this.statsView = new StatsView(this.state, () => this.resetProgress());

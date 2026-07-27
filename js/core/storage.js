@@ -95,6 +95,11 @@ class StorageManager {
       data.version = 4;
       data.businesses = {}; // v3 -> v4: добавлена вкладка «Бизнес»
     }
+    if (data.version === 4) {
+      data.version = 5;     // v4 -> v5: добавлен раздел «Форекс»
+      data.fx = {};
+      data.fxNextId = 1;
+    }
     return data;
   }
 }

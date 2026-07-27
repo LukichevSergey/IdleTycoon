@@ -5,9 +5,10 @@
  * // TODO: раздел «Бизнесы», «Предметы роскоши» и т.п.
  */
 class InvestmentsView {
-  constructor(state, tradeModal) {
+  constructor(state, tradeModal, forexModal) {
     this.state = state;
     this.tradeModal = tradeModal;
+    this.forexModal = forexModal;
     this.sections = [];
     this.activeId = "realty";
   }
@@ -25,6 +26,7 @@ class InvestmentsView {
       { id: "stocks", title: "📈 Акции", make: () => new MarketSection(this.state, "stock", STOCK_DEFS, this.tradeModal) },
       { id: "bonds", title: "📜 Облигации", make: () => new MarketSection(this.state, "bond", BOND_DEFS, this.tradeModal) },
       { id: "deposits", title: "🏦 Вклады", make: () => new DepositsSection(this.state) },
+      { id: "forex", title: "💱 Форекс", make: () => new ForexSection(this.state, this.forexModal) },
       { id: "crypto", title: "🪙 Крипта", make: () => new MarketSection(this.state, "crypto", CRYPTO_DEFS, this.tradeModal,
           "⚠ Криптовалюты — крайне волатильный инструмент: можно удвоиться, можно потерять почти всё. Дохода не приносят, вся ставка — на курс.") },
     ];

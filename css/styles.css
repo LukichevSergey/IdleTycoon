@@ -429,6 +429,47 @@ html, body {
   to { opacity: 0; transform: translateX(30px); }
 }
 
+/* ---------- Форекс ---------- */
+.fx-row .fx-swap { font-size: 10.5px; }
+.fx-quotes { display: flex; flex-direction: column; gap: 2px; }
+.fx-quotes b { font-variant-numeric: tabular-nums; }
+.fx-actions { display: flex; flex-direction: column; gap: 5px; }
+.fx-pos-row { border-left: 3px solid var(--accent-green); }
+.fx-pos-row.short { border-left-color: var(--accent-red); }
+
+/* Полоса «сколько залога съедено убытком» */
+.fx-margin-bar {
+  height: 5px; border-radius: 999px; background: var(--bg-input);
+  overflow: hidden; margin-top: 5px;
+}
+.fx-margin-fill {
+  height: 100%; width: 0; border-radius: 999px;
+  background: var(--accent-green); transition: width 0.4s ease, background 0.4s ease;
+}
+.fx-margin-fill.warn { background: var(--warn); }
+.fx-margin-fill.bad { background: var(--danger); }
+
+/* Окно ордера */
+.fx-quote-row {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  font-size: 13px; margin: 10px 0;
+  font-variant-numeric: tabular-nums;
+}
+.fx-dir-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.fx-dir { flex: 1; padding: 10px; font-size: 13px; }
+#fx-dir-buy.active { background: var(--accent-green); color: #06210f; border-color: var(--accent-green); }
+#fx-dir-sell.active { background: var(--danger); color: #fff; border-color: var(--danger); }
+.fx-field { margin-bottom: 12px; }
+.fx-field .dep-form { margin-top: 5px; }
+.fx-label { font-size: 12px; color: var(--text-muted); }
+.fx-lev.active { background: var(--accent-gold); color: #1a1405; border-color: var(--accent-gold); }
+.fx-summary { margin: 14px 0 4px; font-size: 12.5px; }
+.fx-summary .value.muted { color: var(--text-muted); }
+.fx-go-long { background: var(--accent-green); color: #06210f; }
+.fx-go-long:hover:not(:disabled) { background: #5ce89b; }
+.fx-go-short { background: var(--danger); color: #fff; }
+.fx-go-short:hover:not(:disabled) { background: #f06b6b; }
+
 /* ---------- Бизнесы ---------- */
 .biz-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
 .biz-mech {
