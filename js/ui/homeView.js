@@ -56,6 +56,7 @@ class HomeView {
 
     const parts = [];
     if (s.rentPerSec > 0) parts.push(`аренда ${Fmt.money(s.rentPerSec)}/с`);
+    if (s.businessPerSec > 0) parts.push(`бизнес ${Fmt.money(s.businessPerSec)}/с`);
     if (s.couponPerSec > 0) parts.push(`купоны ${Fmt.money(s.couponPerSec)}/с`);
     if (s.divPerSec > 0) parts.push(`дивиденды ${Fmt.money(s.divPerSec)}/с`);
     if (s.depositPerSec > 0) parts.push(`вклад ${Fmt.money(s.depositPerSec)}/с`);

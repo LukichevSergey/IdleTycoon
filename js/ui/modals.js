@@ -24,6 +24,7 @@ const OfflineModal = {
       "Вы отсутствовали " + Fmt.dur(rep.seconds);
     const rows = [
       ["🏠 Аренда", rep.rent],
+      ["🏢 Бизнесы", rep.business || 0],
       ["📜 Купоны облигаций", rep.coupons],
       ["📈 Дивиденды", rep.divs],
       ["🏦 Выплаты по вкладам", rep.deposits],

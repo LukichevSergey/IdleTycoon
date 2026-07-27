@@ -91,6 +91,10 @@ class StorageManager {
       data.perks = {};
       data.lifetime = { earned: 0, playTimeSec: 0 };
     }
+    if (data.version === 3) {
+      data.version = 4;
+      data.businesses = {}; // v3 -> v4: добавлена вкладка «Бизнес»
+    }
     return data;
   }
 }

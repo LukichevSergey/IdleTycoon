@@ -9,6 +9,7 @@ function freshStats() {
     rentEarned: 0,
     couponEarned: 0,
     divEarned: 0,
+    businessEarned: 0,
     depositEarned: 0,
     clickEarned: 0,
     tradeProfit: 0,   // реализованный P&L трейдинга (может быть отрицательным)
@@ -56,6 +57,10 @@ class GameState extends EventEmitter {
     this.managerHired = false;
     this.market = new MarketSim(MARKET_ASSETS);
 
+    // Бизнесы: id -> null (не открыт) | состояние бизнеса
+    this.businesses = {};
+    BUSINESS_DEFS.forEach((d) => (this.businesses[d.id] = null));
+
     // Престиж: переживает перерождения, обнуляется только полным сбросом
     this.gold = 0;            // золотые монеты
     this.prestigeCount = 0;   // сколько раз перерождался
@@ -76,6 +81,7 @@ class GameState extends EventEmitter {
   }
   get rentMult() { return 1 + 0.15 * this.perkLv("realtor"); }
   get investMult() { return 1 + 0.15 * this.perkLv("guru"); }
+  get businessMult() { return 1 + 0.15 * this.perkLv("mogul"); }
   get offlineMult() { return 1 + 0.25 * this.perkLv("compound"); }
   get clickMult() { return this.perkLv("goldclick") ? 5 : 1; }
   get wearMult() { return this.perkLv("foreman") ? 0.7 : 1; }
@@ -139,6 +145,7 @@ class GameState extends EventEmitter {
     this.bondDefault = {};
     DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
     this.managerHired = false;
+    BUSINESS_DEFS.forEach((d) => (this.businesses[d.id] = null));
     this.market = new MarketSim(MARKET_ASSETS);
 
     this.toast("success", `👑 Перерождение! Получено монет: ${coins} 🪙`);
@@ -147,6 +154,398 @@ class GameState extends EventEmitter {
     this.emit("tick", { dt: 0 });
     this.dirty();
     return coins;
+  }
+
+  // ======================= БИЗНЕСЫ =======================
+  /** Достигнутый ранг (0..5): каждые 5 уровней */
+  bizRank(lv) { return Math.floor(lv / 5); }
+  /** Название бизнеса с учётом ранга */
+  bizRankName(def, lv) {
+    const r = this.bizRank(lv);
+    return r > 0 ? def.ranks[r - 1].name : def.name;
+  }
+  /** Множитель уровня: ×1.18 за уровень, ×1.5 за каждый ранг */
+  bizLevelMult(lv) {
+    return Math.pow(CONFIG.BIZ_INCOME_COEFF, lv - 1)
+      * Math.pow(CONFIG.BIZ_RANK_MULT, this.bizRank(lv));
+  }
+  bizUpgradeCost(def, lv) {
+    return def.openCost * CONFIG.BIZ_UPGRADE_COST * Math.pow(CONFIG.BIZ_UPGRADE_COEFF, lv - 1);
+  }
+
+  /** Множитель индивидуальной механики бизнеса */
+  bizMechMult(id, now = Date.now()) {
+    const def = BIZ_BY_ID[id];
+    const b = this.businesses[id];
+    if (!b) return 0;
+    switch (id) {
+      case "coffee": return b.stockH > 0 ? 1 : 0.25;
+      case "taxi": return 1; // машины учтены в базе
+      case "shop": return b.boost && now < b.boost.until ? b.boost.mult : 1;
+      case "factory":
+        return b.contract ? b.contract.mult
+          : (b.lv >= 20 ? def.contract.idleMult20 : def.contract.idleMult);
+      case "startup": return b.rndMult;
+      case "studio": {
+        const per = b.lv >= 20 ? def.film.catalogPerFilm20 : def.film.catalogPerFilm;
+        return 1 + Math.min(b.films, def.film.catalogCap) * per;
+      }
+      default: return 1;
+    }
+  }
+
+  /**
+   * Доход бизнеса ₽/сек. ignoreMech=true — «полная мощность» (для расчёта
+   * стоимости закупок, кампаний и бюджетов, чтобы не было петли скидок).
+   */
+  bizIncome(id, ignoreMech = false, now = Date.now()) {
+    const def = BIZ_BY_ID[id];
+    const b = this.businesses[id];
+    if (!b) return 0;
+    let base = def.base;
+    if (id === "taxi") {
+      const working = b.cars.filter((c) => !c.broken).length;
+      base += working * def.fleet.carIncome;
+    }
+    const mech = ignoreMech ? 1 : this.bizMechMult(id, now);
+    return base * this.bizLevelMult(b.lv) * mech * this.incomeMult * this.businessMult;
+  }
+  /** Доход за час на полной мощности — база для цен механик */
+  bizHourlyFull(id) { return this.bizIncome(id, true) * 3600; }
+
+  openBusiness(id) {
+    const def = BIZ_BY_ID[id];
+    if (!def || this.businesses[id] || this.balance < def.openCost) return false;
+    this.balance -= def.openCost;
+    this.stats.totalSpent += def.openCost;
+    const b = { lv: 1, invested: def.openCost };
+    // Стартовое состояние механики
+    if (id === "coffee") { b.stockH = 6; b.auto = true; }
+    if (id === "taxi") b.cars = [{ broken: false }]; // первая машина в подарок
+    if (id === "shop") { b.boost = null; b.cooldownUntil = 0; }
+    if (id === "factory") { b.contract = null; b.offer = null; b.nextOfferAt = Date.now() + 30000; }
+    if (id === "startup") { b.rndMult = 1; b.project = null; }
+    if (id === "studio") { b.film = null; b.films = 0; b.lastBox = null; }
+    this.businesses[id] = b;
+    this.toast("success", `🎉 Открыт бизнес: «${def.name}»!`);
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+
+  upgradeBusiness(id) {
+    const def = BIZ_BY_ID[id];
+    const b = this.businesses[id];
+    if (!def || !b || b.lv >= CONFIG.BIZ_MAX_LV) return false;
+    const cost = this.bizUpgradeCost(def, b.lv);
+    if (this.balance < cost) return false;
+    this.balance -= cost;
+    b.lv += 1;
+    b.invested += cost;
+    this.stats.upgradeSpent += cost;
+    if (b.lv % 5 === 0) {
+      const r = this.bizRank(b.lv);
+      this.toast("success", `🏆 «${def.name}» — новый ранг: ${def.ranks[r - 1].name}! (${def.ranks[r - 1].bonus})`);
+    }
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+
+  // --- Кофейня: запасы ---
+  coffeeStockCap(b) { return b.lv >= 15 ? BIZ_BY_ID.coffee.supply.capH15 : BIZ_BY_ID.coffee.supply.capH; }
+  coffeeSupplyCost(hours) {
+    const def = BIZ_BY_ID.coffee;
+    const b = this.businesses.coffee;
+    return this.bizHourlyFull("coffee") * hours * def.supply.costFrac
+      * (b && b.lv >= 20 ? def.supply.discount20 : 1);
+  }
+  buySupplies(hours) {
+    const b = this.businesses.coffee;
+    if (!b) return false;
+    const cap = this.coffeeStockCap(b);
+    hours = Math.min(hours, cap - b.stockH);
+    if (hours <= 0.01) return false;
+    const cost = this.coffeeSupplyCost(hours);
+    if (this.balance < cost) return false;
+    this.balance -= cost;
+    b.stockH += hours;
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+
+  // --- Таксопарк: машины ---
+  taxiCarLimit(b) {
+    const f = BIZ_BY_ID.taxi.fleet;
+    return f.baseSlots + Math.floor(b.lv / f.lvPerSlot);
+  }
+  taxiCarCost(b) {
+    const f = BIZ_BY_ID.taxi.fleet;
+    return f.carCost * Math.pow(f.carCostCoeff, b.cars.length);
+  }
+  taxiRepairCost(b) {
+    const f = BIZ_BY_ID.taxi.fleet;
+    const broken = b.cars.filter((c) => c.broken).length;
+    return broken * f.repairCost * (b.lv >= 10 ? 0.5 : 1);
+  }
+  buyCar() {
+    const b = this.businesses.taxi;
+    if (!b || b.cars.length >= this.taxiCarLimit(b)) return false;
+    const cost = this.taxiCarCost(b);
+    if (this.balance < cost) return false;
+    this.balance -= cost;
+    b.invested += cost;
+    this.stats.totalSpent += cost;
+    b.cars.push({ broken: false });
+    this.toast("success", `🚕 Машина №${b.cars.length} вышла на линию`);
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+  repairCars() {
+    const b = this.businesses.taxi;
+    if (!b) return false;
+    const cost = this.taxiRepairCost(b);
+    if (cost <= 0 || this.balance < cost) return false;
+    this.balance -= cost;
+    this.stats.repairSpent += cost;
+    b.cars.forEach((c) => (c.broken = false));
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+
+  // --- Интернет-магазин: рекламные кампании ---
+  shopCampaignPrice(c) { return this.bizHourlyFull("shop") * c.costH; }
+  runCampaign(campaignId) {
+    const def = BIZ_BY_ID.shop;
+    const b = this.businesses.shop;
+    const c = def.campaigns.find((x) => x.id === campaignId);
+    if (!b || !c) return false;
+    const now = Date.now();
+    if (b.boost && now < b.boost.until) return false;
+    if (b.lv < 10 && now < b.cooldownUntil) return false;
+    const cost = this.shopCampaignPrice(c);
+    if (this.balance < cost) return false;
+    this.balance -= cost;
+    const mult = b.lv >= 20 ? 1 + (c.mult - 1) * 1.5 : c.mult;
+    const durH = b.lv >= 15 ? c.durH * 1.5 : c.durH;
+    b.boost = { mult, until: now + durH * 3600 * 1000, name: c.name };
+    this.toast("success", `📣 Кампания «${c.name}»: доход ×${mult.toFixed(2)} на ${durH} ч`);
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+
+  // --- Завод: контракты ---
+  _makeFactoryOffer(b, now) {
+    const cc = BIZ_BY_ID.factory.contract;
+    const range = b.lv >= 15 ? cc.multRange15 : cc.multRange;
+    return {
+      client: U.choice(FACTORY_CLIENTS),
+      mult: Math.round(U.rand(...range) * 100) / 100,
+      hours: Math.round(U.rand(...cc.durH) * 2) / 2,
+      expires: now + cc.ttlSec * 1000,
+    };
+  }
+  _factoryNextOffer(b, now) {
+    const cc = BIZ_BY_ID.factory.contract;
+    const delay = b.lv >= 10 ? cc.offerDelayMin10 : cc.offerDelayMin;
+    b.nextOfferAt = now + U.rand(...delay) * 60 * 1000;
+  }
+  acceptContract() {
+    const b = this.businesses.factory;
+    if (!b || !b.offer) return false;
+    const o = b.offer;
+    b.contract = { client: o.client, mult: o.mult, end: Date.now() + o.hours * 3600 * 1000 };
+    b.offer = null;
+    this.toast("success", `🏭 Контракт: ${o.client}, ×${o.mult} на ${o.hours} ч`);
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+  declineContract() {
+    const b = this.businesses.factory;
+    if (!b || !b.offer) return false;
+    b.offer = null;
+    this._factoryNextOffer(b, Date.now());
+    this.structural("business");
+    return true;
+  }
+
+  // --- IT-стартап: R&D ---
+  startupProjectPrice(p) { return this.bizHourlyFull("startup") * p.costH; }
+  startProject(projectId) {
+    const def = BIZ_BY_ID.startup;
+    const b = this.businesses.startup;
+    const p = def.rnd.projects.find((x) => x.id === projectId);
+    if (!b || !p || b.project) return false;
+    if (b.rndMult >= def.rnd.cap) {
+      this.toast("warn", "R&D-потенциал исчерпан (множитель на максимуме)");
+      return false;
+    }
+    const cost = this.startupProjectPrice(p);
+    if (this.balance < cost) return false;
+    this.balance -= cost;
+    const durH = b.lv >= 20 ? p.durH / 2 : p.durH;
+    b.project = { id: p.id, name: p.name, done: Date.now() + durH * 3600 * 1000 };
+    this.toast("info", `💻 Запущен R&D: «${p.name}» (${durH} ч)`);
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+  _finishProject(b, silent = false) {
+    const def = BIZ_BY_ID.startup;
+    const p = def.rnd.projects.find((x) => x.id === b.project.id);
+    const chance = p.chance + (b.lv >= 10 ? 0.10 : 0);
+    const ok = Math.random() < chance;
+    const gain = ok ? p.gain : p.failGain;
+    b.rndMult = U.clamp(b.rndMult * (1 + gain), 0.5, def.rnd.cap);
+    b.project = null;
+    if (!silent) {
+      this.toast(ok ? "success" : "warn",
+        ok ? `🚀 R&D «${p.name}» — успех! Доход стартапа ×${b.rndMult.toFixed(2)}`
+           : `🧯 R&D «${p.name}» не взлетел (${gain >= 0 ? "+" : ""}${(gain * 100).toFixed(0)}%)`);
+    }
+    return ok;
+  }
+
+  // --- Кинокомпания: фильмы ---
+  startFilm(budget) {
+    const def = BIZ_BY_ID.studio;
+    const b = this.businesses.studio;
+    if (!b || b.film) return false;
+    const perHour = this.bizHourlyFull("studio");
+    const min = perHour * def.film.budgetMinH;
+    const max = perHour * def.film.budgetMaxH;
+    budget = U.clamp(budget, min, max);
+    if (this.balance < budget) return false;
+    this.balance -= budget;
+    const durH = b.lv >= 10 ? def.film.durH10 : def.film.durH;
+    b.film = { budget, done: Date.now() + durH * 3600 * 1000 };
+    this.toast("info", `🎬 Съёмки начались! Бюджет ${Fmt.moneyShort(budget)}, премьера через ${durH} ч`);
+    this.structural("business");
+    this.dirty();
+    return true;
+  }
+  /** Премьера: возвращает выплату; начисление денег — на вызывающей стороне */
+  _premiere(b, silent = false) {
+    // Сборы: 0.4–4.0 от бюджета, скошено к скромным (квадрат равномерной)
+    let box = 0.4 + Math.pow(Math.random(), 2) * 3.6;
+    if (b.lv >= 15) box += 0.3;
+    const payout = b.film.budget * box;
+    b.films += 1;
+    b.lastBox = box;
+    if (!silent) {
+      this.toast(box >= 1 ? "success" : "warn",
+        `🍿 Премьера! Сборы ×${box.toFixed(2)}: +${Fmt.moneyShort(payout)} (фильмов в каталоге: ${b.films})`);
+    }
+    b.film = null;
+    return payout;
+  }
+
+  /** Тик бизнесов: доход + индивидуальные механики. Вызывается из tick(). */
+  _bizTick(dt, now) {
+    let structural = false;
+    for (const def of BUSINESS_DEFS) {
+      const b = this.businesses[def.id];
+      if (!b) continue;
+
+      // Доход
+      const inc = this.bizIncome(def.id, false, now) * dt;
+      if (inc > 0) {
+        this.balance += inc;
+        this.stats.businessEarned += inc;
+        this.stats.totalEarned += inc;
+      }
+
+      switch (def.id) {
+        case "coffee": {
+          const had = b.stockH > 0;
+          b.stockH = Math.max(0, b.stockH - dt / 3600);
+          // Автозакупка с 10 уровня: пополняем при остатке < 2 ч
+          if (b.lv >= 10 && b.auto && b.stockH < 2) {
+            const cap = this.coffeeStockCap(b);
+            const cost = this.coffeeSupplyCost(cap - b.stockH);
+            if (this.balance >= cost) {
+              this.balance -= cost;
+              b.stockH = cap;
+              structural = true;
+            }
+          }
+          if (had && b.stockH <= 0) {
+            this.toast("warn", "☕ В кофейне закончилось зерно — доход упал!");
+            structural = true;
+          }
+          break;
+        }
+        case "taxi": {
+          const f = def.fleet;
+          const breakEvery = f.breakEveryH * (b.lv >= 20 ? 2 : 1) * 3600;
+          for (const car of b.cars) {
+            if (!car.broken && Math.random() < dt / breakEvery) {
+              car.broken = true;
+              this.toast("warn", "🔧 Машина таксопарка сломалась");
+              structural = true;
+            }
+          }
+          break;
+        }
+        case "shop": {
+          if (b.boost && now >= b.boost.until) {
+            b.cooldownUntil = now + BIZ_BY_ID.shop.cooldownH * 3600 * 1000;
+            b.boost = null;
+            this.toast("info", "📣 Рекламная кампания завершена");
+            structural = true;
+          }
+          break;
+        }
+        case "factory": {
+          if (b.contract && now >= b.contract.end) {
+            this.toast("info", `🏭 Контракт с ${b.contract.client} выполнен`);
+            b.contract = null;
+            this._factoryNextOffer(b, now);
+            structural = true;
+          }
+          if (!b.contract) {
+            if (b.offer && now >= b.offer.expires) {
+              b.offer = null;
+              this._factoryNextOffer(b, now);
+              structural = true;
+            } else if (!b.offer && now >= b.nextOfferAt) {
+              b.offer = this._makeFactoryOffer(b, now);
+              // «Отдел продаж» 25 ур.: автоприём выгодных контрактов
+              if (b.lv >= 25 && b.offer.mult >= 1.2) {
+                this.acceptContract();
+              }
+              structural = true;
+            }
+          }
+          break;
+        }
+        case "startup": {
+          if (b.project && now >= b.project.done) {
+            this._finishProject(b);
+            structural = true;
+            this.dirty();
+          }
+          break;
+        }
+        case "studio": {
+          if (b.film && now >= b.film.done) {
+            const payout = this._premiere(b);
+            this.balance += payout;
+            this.stats.businessEarned += payout;
+            this.stats.totalEarned += payout;
+            structural = true;
+            this.dirty();
+          }
+          break;
+        }
+      }
+    }
+    return structural;
   }
 
   // ======================= ВСПОМОГАТЕЛЬНОЕ =======================
@@ -198,8 +597,12 @@ class GameState extends EventEmitter {
       return s + (dep.principal * this.depositRate(d)) / 3600;
     }, 0) * this.incomeMult;
   }
+  get businessPerSec() {
+    return BUSINESS_DEFS.reduce((s, d) => s + this.bizIncome(d.id), 0);
+  }
   get incomePerSec() {
-    return this.rentPerSec + this.couponPerSec + this.divPerSec + this.depositPerSec;
+    return this.rentPerSec + this.couponPerSec + this.divPerSec
+      + this.depositPerSec + this.businessPerSec;
   }
 
   portfolioValue(kind = null) {
@@ -225,8 +628,12 @@ class GameState extends EventEmitter {
       return dep ? s + dep.principal + (dep.accrued || 0) : s;
     }, 0);
   }
+  get bizInvested() {
+    return BUSINESS_DEFS.reduce((s, d) => s + (this.businesses[d.id]?.invested || 0), 0);
+  }
   get netWorth() {
-    return this.balance + this.propsInvested + this.portfolioValue() + this.depositsTotal;
+    return this.balance + this.propsInvested + this.portfolioValue()
+      + this.depositsTotal + this.bizInvested;
   }
   get ownedPropsCount() {
     return PROPERTY_DEFS.filter((d) => this.props[d.id]).length;
@@ -328,9 +735,13 @@ class GameState extends EventEmitter {
       }
     }
 
+    // --- Бизнесы ---
+    const structuralBiz = this._bizTick(dt, now);
+
     this.stats.playTimeSec += dt;
     if (structuralRealty) this.structural("realty");
     if (structuralDeposits) this.structural("deposits");
+    if (structuralBiz) this.structural("business");
     this.emit("tick", { dt });
   }
 
@@ -643,7 +1054,7 @@ class GameState extends EventEmitter {
    */
   applyOffline(seconds, now = Date.now()) {
     const T = Math.min(seconds, CONFIG.OFFLINE_CAP_HOURS * 3600);
-    const rep = { seconds: T, rent: 0, coupons: 0, divs: 0, deposits: 0, total: 0 };
+    const rep = { seconds: T, rent: 0, coupons: 0, divs: 0, deposits: 0, business: 0, total: 0 };
     const start = now - T * 1000;
 
     this.market.advance(T);
@@ -719,21 +1130,77 @@ class GameState extends EventEmitter {
       }
     }
 
+    // --- бизнесы (упрощённая, но честная модель) ---
+    for (const def of BUSINESS_DEFS) {
+      const b = this.businesses[def.id];
+      if (!b) continue;
+      const full = this.bizIncome(def.id, true, now); // полная мощность, ₽/с
+      switch (def.id) {
+        case "coffee": {
+          if (b.lv >= 10 && b.auto) {
+            // Автозакупка: работаем всё время, поставки вычтены из выручки
+            rep.business += full * T * (1 - def.supply.costFrac);
+            b.stockH = this.coffeeStockCap(b);
+          } else {
+            const tFull = Math.min(T, b.stockH * 3600);
+            rep.business += full * tFull + full * 0.25 * (T - tFull);
+            b.stockH = Math.max(0, b.stockH - T / 3600);
+          }
+          break;
+        }
+        case "taxi": // офлайн машины не ломаются — не наказываем за сон
+          rep.business += this.bizIncome("taxi", false, now) * T;
+          break;
+        case "shop": {
+          let tBoost = 0;
+          if (b.boost) {
+            tBoost = U.clamp((b.boost.until - start) / 1000, 0, T);
+            rep.business += full * b.boost.mult * tBoost;
+            if (now >= b.boost.until) { b.boost = null; b.cooldownUntil = 0; }
+          }
+          rep.business += full * (T - tBoost);
+          break;
+        }
+        case "factory": {
+          const idle = b.lv >= 20 ? def.contract.idleMult20 : def.contract.idleMult;
+          let tC = 0;
+          if (b.contract) {
+            tC = U.clamp((b.contract.end - start) / 1000, 0, T);
+            rep.business += full * b.contract.mult * tC;
+            if (now >= b.contract.end) { b.contract = null; this._factoryNextOffer(b, now); }
+          }
+          rep.business += full * idle * (T - tC);
+          break;
+        }
+        case "startup":
+          rep.business += this.bizIncome("startup", false, now) * T;
+          if (b.project && now >= b.project.done) this._finishProject(b); // тост при входе
+          break;
+        case "studio":
+          rep.business += this.bizIncome("studio", false, now) * T;
+          if (b.film && now >= b.film.done) rep.business += this._premiere(b, true);
+          break;
+      }
+    }
+
     // «Сложный процент»: бонус к заработанному офлайн (тело вкладов не трогаем)
     rep.rent *= this.offlineMult;
     rep.coupons *= this.offlineMult;
     rep.divs *= this.offlineMult;
-    rep.total = rep.rent + rep.coupons + rep.divs + rep.deposits;
+    rep.business *= this.offlineMult;
+    rep.total = rep.rent + rep.coupons + rep.divs + rep.deposits + rep.business;
     this.balance += rep.total;
     this.stats.rentEarned += rep.rent;
     this.stats.couponEarned += rep.coupons;
     this.stats.divEarned += rep.divs;
     this.stats.depositEarned += depositInterest;
-    this.stats.totalEarned += rep.rent + rep.coupons + rep.divs + depositInterest;
+    this.stats.businessEarned += rep.business;
+    this.stats.totalEarned += rep.rent + rep.coupons + rep.divs + depositInterest + rep.business;
 
     this.structural("realty");
     this.structural("deposits");
     this.structural("portfolio");
+    this.structural("business");
     this.emit("market");
     this.emit("tick", { dt: 0 });
     return rep;
@@ -773,6 +1240,7 @@ class GameState extends EventEmitter {
       bondDefault: this.bondDefault,
       deposits: this.deposits,
       managerHired: this.managerHired,
+      businesses: this.businesses,
       market: this.market.serialize(),
       gold: this.gold,
       prestigeCount: this.prestigeCount,
@@ -809,6 +1277,11 @@ class GameState extends EventEmitter {
       });
     }
     this.managerHired = !!data.managerHired;
+    if (data.businesses) {
+      BUSINESS_DEFS.forEach((d) => {
+        if (data.businesses[d.id]) this.businesses[d.id] = data.businesses[d.id];
+      });
+    }
     this.market.load(data.market);
     this.gold = data.gold || 0;
     this.prestigeCount = data.prestigeCount || 0;
@@ -827,6 +1300,7 @@ class GameState extends EventEmitter {
     this.bondDefault = {};
     DEPOSIT_DEFS.forEach((d) => (this.deposits[d.id] = null));
     this.managerHired = false;
+    BUSINESS_DEFS.forEach((d) => (this.businesses[d.id] = null));
     this.market = new MarketSim(MARKET_ASSETS);
     this.gold = 0;
     this.prestigeCount = 0;

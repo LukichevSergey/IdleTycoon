@@ -40,6 +40,7 @@ class StatsView {
       ["Собственный капитал", Fmt.moneyShort(state.netWorth)],
       ["Всего заработано", Fmt.moneyShort(s.totalEarned)],
       ["Аренда", Fmt.moneyShort(s.rentEarned)],
+      ["Бизнесы", Fmt.moneyShort(s.businessEarned)],
       ["Купоны", Fmt.moneyShort(s.couponEarned)],
       ["Дивиденды", Fmt.moneyShort(s.divEarned)],
       ["Проценты по вкладам", Fmt.moneyShort(s.depositEarned)],
