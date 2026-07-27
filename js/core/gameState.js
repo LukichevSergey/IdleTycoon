@@ -81,7 +81,11 @@ class GameState extends EventEmitter {
   }
   get rentMult() { return 1 + 0.15 * this.perkLv("realtor"); }
   get investMult() { return 1 + 0.15 * this.perkLv("guru"); }
-  get businessMult() { return 1 + 0.15 * this.perkLv("mogul"); }
+  get businessMult() {
+    return (1 + 0.15 * this.perkLv("mogul")) * (this.perkLv("bizempire") ? 1.5 : 1);
+  }
+  /** «Надёжный поставщик»: скорость расхода зерна кофейни */
+  get coffeeUseRate() { return this.perkLv("logist") ? 0.75 : 1; }
   get offlineMult() { return 1 + 0.25 * this.perkLv("compound"); }
   get clickMult() { return this.perkLv("goldclick") ? 5 : 1; }
   get wearMult() { return this.perkLv("foreman") ? 0.7 : 1; }
@@ -317,7 +321,9 @@ class GameState extends EventEmitter {
   }
 
   // --- Интернет-магазин: рекламные кампании ---
-  shopCampaignPrice(c) { return this.bizHourlyFull("shop") * c.costH; }
+  shopCampaignPrice(c) {
+    return this.bizHourlyFull("shop") * c.costH * (this.perkLv("viral") ? 0.7 : 1);
+  }
   runCampaign(campaignId) {
     const def = BIZ_BY_ID.shop;
     const b = this.businesses.shop;
@@ -342,9 +348,11 @@ class GameState extends EventEmitter {
   _makeFactoryOffer(b, now) {
     const cc = BIZ_BY_ID.factory.contract;
     const range = b.lv >= 15 ? cc.multRange15 : cc.multRange;
+    // «Госзаказы»: нижняя граница ставки не меньше ×1.1
+    const low = this.perkLv("gos") ? Math.max(range[0], 1.1) : range[0];
     return {
       client: U.choice(FACTORY_CLIENTS),
-      mult: Math.round(U.rand(...range) * 100) / 100,
+      mult: Math.round(U.rand(low, range[1]) * 100) / 100,
       hours: Math.round(U.rand(...cc.durH) * 2) / 2,
       expires: now + cc.ttlSec * 1000,
     };
@@ -375,7 +383,9 @@ class GameState extends EventEmitter {
   }
 
   // --- IT-стартап: R&D ---
-  startupProjectPrice(p) { return this.bizHourlyFull("startup") * p.costH; }
+  startupProjectPrice(p) {
+    return this.bizHourlyFull("startup") * p.costH * (this.perkLv("angel") ? 0.7 : 1);
+  }
   startProject(projectId) {
     const def = BIZ_BY_ID.startup;
     const b = this.businesses.startup;
@@ -433,6 +443,7 @@ class GameState extends EventEmitter {
   _premiere(b, silent = false) {
     // Сборы: 0.4–4.0 от бюджета, скошено к скромным (квадрат равномерной)
     let box = 0.4 + Math.pow(Math.random(), 2) * 3.6;
+    if (this.perkLv("producer")) box = Math.max(box, 0.7); // «Продюсерское чутьё»
     if (b.lv >= 15) box += 0.3;
     const payout = b.film.budget * box;
     b.films += 1;
@@ -463,7 +474,7 @@ class GameState extends EventEmitter {
       switch (def.id) {
         case "coffee": {
           const had = b.stockH > 0;
-          b.stockH = Math.max(0, b.stockH - dt / 3600);
+          b.stockH = Math.max(0, b.stockH - (dt / 3600) * this.coffeeUseRate);
           // Автозакупка с 10 уровня: пополняем при остатке < 2 ч
           if (b.lv >= 10 && b.auto && b.stockH < 2) {
             const cap = this.coffeeStockCap(b);
@@ -1142,9 +1153,9 @@ class GameState extends EventEmitter {
             rep.business += full * T * (1 - def.supply.costFrac);
             b.stockH = this.coffeeStockCap(b);
           } else {
-            const tFull = Math.min(T, b.stockH * 3600);
+            const tFull = Math.min(T, (b.stockH * 3600) / this.coffeeUseRate);
             rep.business += full * tFull + full * 0.25 * (T - tFull);
-            b.stockH = Math.max(0, b.stockH - T / 3600);
+            b.stockH = Math.max(0, b.stockH - (T / 3600) * this.coffeeUseRate);
           }
           break;
         }

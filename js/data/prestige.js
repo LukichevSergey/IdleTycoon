@@ -78,6 +78,28 @@ const PRESTIGE_DEFS = [
     effect: "На бирже видно, когда бумага недооценена или переоценена",
   },
 
+  // --- Перки под механики бизнесов ---
+  {
+    id: "logist", icon: "🚚", name: "Надёжный поставщик", type: "once", costs: [4],
+    effect: "Запасы кофейни расходуются на 25% медленнее",
+  },
+  {
+    id: "viral", icon: "📱", name: "Вирусный маркетинг", type: "once", costs: [5],
+    effect: "Рекламные кампании магазина на 30% дешевле",
+  },
+  {
+    id: "gos", icon: "🏛️", name: "Госзаказы", type: "once", costs: [6],
+    effect: "Контракты завода — не ниже ставки ×1.1",
+  },
+  {
+    id: "angel", icon: "😇", name: "Бизнес-ангел", type: "once", costs: [6],
+    effect: "R&D-проекты стартапа на 30% дешевле",
+  },
+  {
+    id: "producer", icon: "🍿", name: "Продюсерское чутьё", type: "once", costs: [8],
+    effect: "Сборы фильмов не бывают ниже ×0.7 бюджета",
+  },
+
   // --- Дорогая эндгейм-экзотика ---
   {
     id: "goldclick", icon: "🤝", name: "Золотое рукопожатие", type: "once", costs: [10],
@@ -86,6 +108,10 @@ const PRESTIGE_DEFS = [
   {
     id: "empire", icon: "🌍", name: "Империя", type: "once", costs: [25],
     effect: "+50% ко всему доходу",
+  },
+  {
+    id: "bizempire", icon: "💎", name: "Империя бизнеса", type: "once", costs: [40],
+    effect: "Доход всех бизнесов ×1.5",
   },
   {
     id: "legend", icon: "🏆", name: "Легенда рынка", type: "once", costs: [50],
