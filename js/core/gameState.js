@@ -1496,6 +1496,11 @@ class GameState extends EventEmitter {
     this.prestigeCount = data.prestigeCount || 0;
     this.perks = data.perks || {};
     this.lifetime = { earned: 0, playTimeSec: 0, ...(data.lifetime || {}) };
+    // Загрузка сейва — структурное изменение: карточки надо пересобрать
+    // ДО обновления по тику, иначе UI обратится к ссылкам на старый DOM.
+    // При первом запуске подписчиков ещё нет, и события просто уходят в пустоту.
+    this.structural("all");
+    this.emit("market");
     this.emit("tick", { dt: 0 });
   }
 

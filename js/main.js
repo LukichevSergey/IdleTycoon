@@ -15,7 +15,10 @@ class Game {
     this.state = new GameState();
     // Смена хранилища: подставить другой провайдер, остальное без изменений.
     // TODO: new StorageManager(new RestApiStorageProvider(apiUrl))
-    this.storage = new StorageManager(new LocalStorageProvider(CONFIG.SAVE_KEY));
+    this.storage = new StorageManager(
+      new LocalStorageProvider(CONFIG.SAVE_KEY),
+      new LocalStorageProvider(CONFIG.SAVE_KEY + "-backup")
+    );
     this._lastTickTime = Date.now();
     this._nextEventAt = Date.now() + this._eventDelay();
   }
@@ -46,7 +49,7 @@ class Game {
     this.investmentsView = new InvestmentsView(this.state, this.tradeModal, this.forexModal);
     this.businessView = new BusinessView(this.state);
     this.prestigeView = new PrestigeView(this.state);
-    this.statsView = new StatsView(this.state, () => this.resetProgress());
+    this.statsView = new StatsView(this.state, this);
 
     // Конфиг вкладок: новая вкладка — новая запись здесь. // TODO: «Достижения»
     this.tabManager = new TabManager(
@@ -102,14 +105,53 @@ class Game {
   }
 
   async save() {
-    await this.storage.save(this.state.serialize());
-    SaveIndicator.blink();
+    try {
+      await this.storage.save(this.state.serialize());
+      SaveIndicator.blink();
+      this._saveFailed = false;
+    } catch (e) {
+      // Предупреждаем один раз, чтобы не заспамить тостами каждые 30 секунд
+      if (!this._saveFailed) {
+        this._saveFailed = true;
+        Toasts.show("danger",
+          "⚠ Не удалось сохранить прогресс в браузере. Скачайте резервную копию на вкладке «Статистика».", 12000);
+        console.error(e);
+      }
+    }
   }
 
   async resetProgress() {
+    await this.storage.backup(); // на случай, если сброс нажали случайно
     await this.storage.clear();
     this.state.reset();
     await this.save();
+  }
+
+  /** Актуальный сейв для выгрузки: сначала фиксируем текущее состояние */
+  async exportSave() {
+    await this.save();
+    return await this.storage.raw();
+  }
+
+  /**
+   * Восстановление прогресса. Текущий сейв уходит в резервный слот,
+   * поэтому неудачный импорт можно откатить.
+   * Время последнего сохранения намеренно сбрасывается на «сейчас»:
+   * импорт не должен начислять офлайн-доход за годы лежания файла.
+   */
+  async applyImport(data) {
+    await this.storage.backup();
+    this.state.hydrate(data); // сам пересоберёт UI (structural + market + tick)
+    this._lastTickTime = Date.now();
+    await this.save();
+  }
+
+  /** Откат к копии, сделанной перед последним импортом или сбросом */
+  async restoreBackup() {
+    const data = await this.storage.loadBackup();
+    if (!data) return false;
+    await this.applyImport(data);
+    return true;
   }
 }
 

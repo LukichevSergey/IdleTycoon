@@ -1,10 +1,10 @@
 
 /** Вкладка «Статистика / Настройки» */
 class StatsView {
-  /** onReset — колбэк полного сброса (реализован в main.js) */
-  constructor(state, onReset) {
+  /** game — нужен блоку настроек для резервных копий и сброса */
+  constructor(state, game) {
     this.state = state;
-    this.onReset = onReset;
+    this.game = game;
   }
 
   render(container) {
@@ -12,23 +12,11 @@ class StatsView {
       <div class="stats-grid" id="stats-grid"></div>
       <div class="settings-section">
         <h3>Настройки</h3>
-        <div class="settings-placeholder">
-          Здесь появятся: переключение темы, экспорт/импорт сейва, звук,
-          график роста капитала.
-          <!-- TODO: переключатель темы — менять data-theme на <html> -->
-          <!-- TODO: экспорт/импорт сейва JSON через StorageManager -->
-          <!-- TODO: график капитала (canvas по истории stats) -->
-          <br>
-          <button class="danger-btn" id="reset-btn">⚠ Сбросить прогресс</button>
-        </div>
+        <div id="settings-host"></div>
       </div>
     `;
     this.grid = container.querySelector("#stats-grid");
-    container.querySelector("#reset-btn").addEventListener("click", () => {
-      if (confirm("Точно сбросить весь прогресс? Это действие необратимо.")) {
-        this.onReset();
-      }
-    });
+    new SettingsSection(this.state, this.game).mount(container.querySelector("#settings-host"));
     this.state.on("tick", () => this.update());
     this.update();
   }
