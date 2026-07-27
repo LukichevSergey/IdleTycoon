@@ -198,6 +198,10 @@ class StorageManager {
       data.fx = {};
       data.fxNextId = 1;
     }
+    if (data.version === 5) {
+      data.version = 6;     // v5 -> v6: добавлены достижения
+      data.achievements = {};
+    }
     return data;
   }
 }

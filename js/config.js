@@ -3,7 +3,7 @@
  * Меняя эти числа, можно перенастроить экономику, не трогая логику.
  */
 const CONFIG = {
-  SAVE_VERSION: 5,          // версия структуры сейва (для миграций)
+  SAVE_VERSION: 6,          // версия структуры сейва (для миграций)
   SAVE_KEY: "financial-tycoon-save",
   STARTING_BALANCE: 1000,
 

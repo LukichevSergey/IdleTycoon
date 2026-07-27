@@ -13,10 +13,17 @@ function freshStats() {
     depositEarned: 0,
     clickEarned: 0,
     tradeProfit: 0,   // реализованный P&L трейдинга (может быть отрицательным)
+    tradeCount: 0,
+    clickCount: 0,
+    offlineCollected: 0,
+    bestFilmBox: 0,   // лучшие сборы фильма (множитель к бюджету)
     fxProfit: 0,      // реализованный P&L форекса (может быть отрицательным)
     fxSwap: 0,        // накопленные свопы (обычно отрицательные)
+    fxSwapEarned: 0,  // только положительная часть свопов (carry trade)
     fxTrades: 0,
     fxStopOuts: 0,
+    fxShortWins: 0,   // прибыльных закрытий шортов
+    fxMaxLev: 0,      // максимальное использованное плечо
     feesPaid: 0,
     repairSpent: 0,
     upgradeSpent: 0,
@@ -75,8 +82,47 @@ class GameState extends EventEmitter {
     this.prestigeCount = 0;   // сколько раз перерождался
     this.perks = {};          // perkId -> уровень (для once: 0/1)
     this.lifetime = { earned: 0, playTimeSec: 0 }; // «вечная» статистика
+    this.achievements = {};   // achId -> timestamp получения (тоже переживают перерождение)
 
-    // TODO: достижения (this.achievements), бусты (this.boosts)
+    // TODO: временные бусты (this.boosts)
+  }
+
+  // ======================= ДОСТИЖЕНИЯ =======================
+  hasAch(id) { return !!this.achievements[id]; }
+  get achCount() { return Object.keys(this.achievements).length; }
+
+  /** Прогресс к достижению, 0..1 (для полосок в интерфейсе) */
+  achProgress(def) {
+    if (this.hasAch(def.id)) return 1;
+    if (def.goal) return U.clamp((def.value(this) || 0) / def.goal, 0, 1);
+    return def.check(this) ? 1 : 0;
+  }
+  /** Текстовый прогресс вида «7 / 25», «12 мин 3 с / 1 ч», «1,2 млн ₽ / 10 млн ₽» */
+  achProgressText(def) {
+    if (!def.goal) return "";
+    const v = Math.min(def.value(this) || 0, def.goal);
+    const fmt =
+      def.unit === "time" ? (x) => Fmt.durShort(x)
+      : def.unit === "money" ? (x) => Fmt.moneyShort(x)
+      : (x) => String(Math.floor(x * 100) / 100);
+    return `${fmt(v)} / ${fmt(def.goal)}`;
+  }
+
+  /**
+   * Проверка невыполненных достижений. Вызывается раз в тик:
+   * список только сокращается, а предикаты дешёвые.
+   */
+  _checkAchievements(now = Date.now()) {
+    for (const def of ACHIEVEMENT_DEFS) {
+      if (this.achievements[def.id]) continue;
+      const done = def.goal ? (def.value(this) || 0) >= def.goal : def.check(this);
+      if (!done) continue;
+      this.achievements[def.id] = now;
+      this.gold += def.coins;
+      this.toast("success", `🏅 Достижение: «${def.name}» · +${def.coins} 🪙`);
+      this.structural("achievements");
+      this.dirty();
+    }
   }
 
   // ======================= ПРЕСТИЖ: ПЕРКИ И МНОЖИТЕЛИ =======================
@@ -458,6 +504,7 @@ class GameState extends EventEmitter {
     const payout = b.film.budget * box;
     b.films += 1;
     b.lastBox = box;
+    this.stats.bestFilmBox = Math.max(this.stats.bestFilmBox, box);
     if (!silent) {
       this.toast(box >= 1 ? "success" : "warn",
         `🍿 Премьера! Сборы ×${box.toFixed(2)}: +${Fmt.moneyShort(payout)} (фильмов в каталоге: ${b.films})`);
@@ -760,6 +807,7 @@ class GameState extends EventEmitter {
     const structuralBiz = this._bizTick(dt, now);
     // --- Форекс: свопы, стоп-лоссы, тейк-профиты, стоп-ауты ---
     this._fxTick(dt, now);
+    this._checkAchievements(now);
 
     this.stats.playTimeSec += dt;
     if (structuralRealty) this.structural("realty");
@@ -933,6 +981,7 @@ class GameState extends EventEmitter {
       pos.qty += qty;
       this.portfolio[id] = pos;
       if (def.kind === "bond") this.bondsRemaining[id] -= qty;
+      this.stats.tradeCount += 1;
       this.toast("success", `Куплено: ${def.name} × ${Fmt.qty(qty)}`);
     } else {
       const pos = this.portfolio[id];
@@ -1024,6 +1073,7 @@ class GameState extends EventEmitter {
     const id = this.fxNextId++;
     this.fx[id] = { id, pair: pairId, dir, lots, notional, lev, margin, entry, sl, tp, swap: 0, openedAt: Date.now() };
     this.stats.fxTrades += 1;
+    this.stats.fxMaxLev = Math.max(this.stats.fxMaxLev, lev);
     this.toast("success",
       `${dir > 0 ? "▲ Покупка" : "▼ Продажа"} ${def.ticker} · ${lots} лот(ов) · плечо 1:${lev}`);
     this.structural("forex");
@@ -1044,7 +1094,9 @@ class GameState extends EventEmitter {
     this.balance += payout;
     this.stats.fxProfit += total;
     this.stats.fxSwap += pos.swap;
+    if (pos.swap > 0) this.stats.fxSwapEarned += pos.swap; // заработок на carry trade
     if (total > 0) this.stats.totalEarned += total;
+    if (pos.dir < 0 && total > 0) this.stats.fxShortWins += 1;
     if (reason === "stopout") this.stats.fxStopOuts += 1;
     delete this.fx[posId];
 
@@ -1157,6 +1209,7 @@ class GameState extends EventEmitter {
     const gain = (CONFIG.CLICK_BASE * this.incomeMult
       + this.incomePerSec * CONFIG.CLICK_INCOME_SECONDS) * this.clickMult;
     this.balance += gain;
+    this.stats.clickCount += 1;
     this.stats.clickEarned += gain;
     this.stats.totalEarned += gain;
     this.emit("tick", { dt: 0 });
@@ -1400,6 +1453,7 @@ class GameState extends EventEmitter {
     this.stats.depositEarned += depositInterest;
     this.stats.businessEarned += rep.business;
     this.stats.totalEarned += rep.rent + rep.coupons + rep.divs + depositInterest + rep.business;
+    if (rep.total > 0.01) this.stats.offlineCollected += 1;
 
     this.structural("realty");
     this.structural("deposits");
@@ -1453,6 +1507,7 @@ class GameState extends EventEmitter {
       prestigeCount: this.prestigeCount,
       perks: this.perks,
       lifetime: this.lifetime,
+      achievements: this.achievements,
     };
   }
 
@@ -1496,6 +1551,7 @@ class GameState extends EventEmitter {
     this.prestigeCount = data.prestigeCount || 0;
     this.perks = data.perks || {};
     this.lifetime = { earned: 0, playTimeSec: 0, ...(data.lifetime || {}) };
+    this.achievements = data.achievements || {};
     // Загрузка сейва — структурное изменение: карточки надо пересобрать
     // ДО обновления по тику, иначе UI обратится к ссылкам на старый DOM.
     // При первом запуске подписчиков ещё нет, и события просто уходят в пустоту.
@@ -1522,6 +1578,7 @@ class GameState extends EventEmitter {
     this.prestigeCount = 0;
     this.perks = {};
     this.lifetime = { earned: 0, playTimeSec: 0 };
+    this.achievements = {};
     this.structural("all");
     this.emit("market");
     this.emit("tick", { dt: 0 });

@@ -48,6 +48,7 @@ class Game {
     this.homeView = new HomeView(this.state, goto);
     this.investmentsView = new InvestmentsView(this.state, this.tradeModal, this.forexModal);
     this.businessView = new BusinessView(this.state);
+    this.achievementsView = new AchievementsView(this.state);
     this.prestigeView = new PrestigeView(this.state);
     this.statsView = new StatsView(this.state, this);
 
@@ -57,6 +58,7 @@ class Game {
         { id: "home", title: "Главная", view: this.homeView },
         { id: "investments", title: "Инвестиции", view: this.investmentsView },
         { id: "business", title: "Бизнес", view: this.businessView },
+        { id: "achievements", title: "Достижения", view: this.achievementsView },
         { id: "prestige", title: "Престиж", view: this.prestigeView },
         { id: "stats", title: "Статистика", view: this.statsView },
       ],

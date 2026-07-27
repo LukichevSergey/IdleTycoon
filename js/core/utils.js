@@ -23,9 +23,15 @@ const Fmt = {
   /** Деньги полностью: 1 234 567,89 ₽ */
   money: (v) => nfMoney.format(v) + " ₽",
 
-  /** Компактно для крупных сумм: 1,15 млн ₽ */
+  /** Компактно для крупных сумм: 1,15 млн ₽ / 3,4 трлн ₽ */
   moneyShort(v) {
     const a = Math.abs(v);
+    // Поздняя игра доходит до триллионов и дальше — без этих ступеней
+    // крупные суммы превращаются в нечитаемую простыню цифр
+    if (a >= 1e21) return nfShort.format(v / 1e21) + " секстлн ₽";
+    if (a >= 1e18) return nfShort.format(v / 1e18) + " квинтлн ₽";
+    if (a >= 1e15) return nfShort.format(v / 1e15) + " квдрлн ₽";
+    if (a >= 1e12) return nfShort.format(v / 1e12) + " трлн ₽";
     if (a >= 1e9) return nfShort.format(v / 1e9) + " млрд ₽";
     if (a >= 1e6) return nfShort.format(v / 1e6) + " млн ₽";
     return this.money(v);

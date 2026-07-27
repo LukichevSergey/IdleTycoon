@@ -429,6 +429,42 @@ html, body {
   to { opacity: 0; transform: translateX(30px); }
 }
 
+/* ---------- Достижения ---------- */
+.ach-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.ach-card { gap: 8px; }
+.ach-card.ach-done { border-color: rgba(61, 220, 132, 0.4); }
+.ach-fill { background: var(--accent-gold); }
+.ach-pct { width: auto; min-width: 46px; font-size: 11px; }
+
+/* Блок «Текущие цели» на главной */
+.goals-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-top: 16px;
+  text-align: left;
+}
+.goals-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 12px;
+  font-size: 14px; font-weight: 700;
+}
+.goal-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.goal-row:first-child { border-top: none; }
+.goal-icon { font-size: 22px; }
+.goal-body { flex: 1; min-width: 0; }
+.goal-name { font-size: 13px; font-weight: 600; }
+.goal-desc { font-size: 11.5px; color: var(--text-muted); margin: 2px 0 5px; }
+.goal-pct {
+  font-size: 12px; color: var(--text-muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- Форекс ---------- */
 .fx-row .fx-swap { font-size: 10.5px; }
 .fx-quotes { display: flex; flex-direction: column; gap: 2px; }
@@ -574,6 +610,13 @@ html, body {
   .m-row .m-c-act { grid-area: act; }
   .m-row .m-c-act .btn-sm { width: 100%; }
 }
+/* Вкладок стало шесть — в одну строку на телефоне они не помещаются,
+   поэтому переносим их на вторую строку, а не прячем за обрезкой */
+@media (max-width: 620px) {
+  .tabs-nav { flex-wrap: wrap; }
+  .tab-btn { flex: 1 1 30%; }
+}
+
 @media (max-width: 480px) {
   .app { padding: 14px 10px 80px; }
   .balance-hero { padding: 26px 14px; }

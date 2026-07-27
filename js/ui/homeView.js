@@ -22,6 +22,15 @@ class HomeView {
         <button class="deal-btn" id="deal-btn">🤝 Заключить сделку</button>
         <div class="alert-line hidden" id="vacant-alert"></div>
       </div>
+
+      <!-- Ближайшие цели: главный ответ на вопрос «что делать дальше» -->
+      <div class="goals-card hidden" id="goals-card">
+        <div class="goals-head">
+          <span>🎯 Текущие цели</span>
+          <button class="btn-sm" id="goals-all">Все достижения</button>
+        </div>
+        <div id="goals-list"></div>
+      </div>
     `;
     this.balanceEl = container.querySelector("#balance-value");
     this.headerBalanceEl = document.getElementById("header-balance");
@@ -43,6 +52,13 @@ class HomeView {
       setTimeout(() => float.remove(), 900);
     });
     this.alertEl.addEventListener("click", () => this.goto("investments", "realty"));
+
+    this.goalsCard = container.querySelector("#goals-card");
+    this.goalsList = container.querySelector("#goals-list");
+    container.querySelector("#goals-all").addEventListener("click", () => this.goto("achievements"));
+    this.state.on("structural", ({ scope }) => {
+      if (scope === "achievements" || scope === "all") this._goalIds = null; // пересобрать подборку
+    });
 
     this.state.on("tick", () => this.update());
     this.update();
@@ -73,6 +89,8 @@ class HomeView {
       this.goldEl.classList.add("hidden");
     }
 
+    this.updateGoals();
+
     const vacant = s.vacantPropsCount;
     if (vacant > 0) {
       this.alertEl.textContent = `⚠ Объектов без арендатора: ${vacant} — перейти к недвижимости`;
@@ -80,6 +98,51 @@ class HomeView {
     } else {
       this.alertEl.classList.add("hidden");
     }
+  }
+
+  /**
+   * Три ближайшие к выполнению цели. Подборка пересчитывается редко
+   * (при получении достижения), а полосы обновляются каждый тик —
+   * иначе карточки прыгали бы местами при каждом изменении баланса.
+   */
+  updateGoals() {
+    const s = this.state;
+    if (!this._goalIds) {
+      const pending = ACHIEVEMENT_DEFS
+        .filter((a) => !s.hasAch(a.id) && !a.secret)
+        .map((a) => ({ a, p: s.achProgress(a) }))
+        .sort((x, y) => y.p - x.p)
+        .slice(0, 3);
+      this._goalIds = pending.map((x) => x.a.id);
+
+      if (!this._goalIds.length) {
+        this.goalsCard.classList.add("hidden");
+        return;
+      }
+      this.goalsCard.classList.remove("hidden");
+      this.goalsList.innerHTML = "";
+      this._goalRefs = pending.map(({ a }) => {
+        const row = document.createElement("div");
+        row.className = "goal-row";
+        row.innerHTML = `
+          <div class="goal-icon">${a.icon}</div>
+          <div class="goal-body">
+            <div class="goal-name">${a.name} <span class="chip">🪙 ${a.coins}</span></div>
+            <div class="goal-desc">${a.desc}</div>
+            <div class="cond-bar"><div class="cond-fill ach-fill" data-r="fill"></div></div>
+          </div>
+          <div class="goal-pct" data-r="text">—</div>
+        `;
+        this.goalsList.appendChild(row);
+        return { def: a, fill: row.querySelector('[data-r="fill"]'), text: row.querySelector('[data-r="text"]') };
+      });
+    }
+
+    (this._goalRefs || []).forEach(({ def, fill, text }) => {
+      const p = s.achProgress(def);
+      fill.style.width = (p * 100).toFixed(1) + "%";
+      text.textContent = def.goal ? s.achProgressText(def) : Math.round(p * 100) + "%";
+    });
   }
 
   /** Подсветка баланса при крупном пополнении (офлайн-доход) */
