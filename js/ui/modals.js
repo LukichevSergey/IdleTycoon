@@ -29,11 +29,31 @@ const OfflineModal = {
       ["📈 Дивиденды", rep.divs],
       ["🏦 Выплаты по вкладам", rep.deposits],
     ].filter(([, v]) => v > 0.005);
-    document.getElementById("offline-rows").innerHTML = rows
-      .map(([label, v]) => `<div class="r"><span>${label}</span><span>+${Fmt.money(v)}</span></div>`)
-      .join("");
+    document.getElementById("offline-rows").innerHTML =
+      rows.map(([label, v]) => `<div class="r"><span>${label}</span><span>+${Fmt.money(v)}</span></div>`).join("")
+      + this._fxRows(rep.fxClosed);
     document.getElementById("offline-modal").classList.add("visible");
   },
+  /**
+   * Валютные позиции, закрывшиеся за время отсутствия.
+   * Деньги за них уже зачислены при закрытии, поэтому в общую сумму сверху
+   * они не входят — показываем их отдельным блоком, с причиной закрытия
+   * (стоп-лосс, тейк-профит или стоп-аут) и итогом по каждой сделке.
+   */
+  _fxRows(closed) {
+    if (!closed || !closed.length) return "";
+    const red = "color:var(--accent-red)";
+    const rows = closed.map((c) => {
+      const v = c.net !== undefined ? c.net : c.total;
+      return `<div class="r"><span>${c.label} · ${c.ticker}</span>`
+        + `<span${v < 0 ? ` style="${red}"` : ""}>${v >= 0 ? "+" : "−"}${Fmt.money(Math.abs(v))}</span></div>`;
+    }).join("");
+    const sum = closed.reduce((s, c) => s + (c.net !== undefined ? c.net : c.total), 0);
+    const head = `<div class="r"><span style="color:var(--text-muted)">💱 Форекс: закрыто позиций — ${closed.length}</span>`
+      + `<span${sum < 0 ? ` style="${red}"` : ""}>${sum >= 0 ? "+" : "−"}${Fmt.money(Math.abs(sum))}</span></div>`;
+    return head + rows;
+  },
+
   hide() {
     document.getElementById("offline-modal").classList.remove("visible");
   },

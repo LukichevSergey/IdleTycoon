@@ -63,7 +63,8 @@ class Game {
         { id: "stats", title: "Статистика", view: this.statsView },
       ],
       document.getElementById("tabs-nav"),
-      document.getElementById("tabs-container")
+      document.getElementById("tabs-container"),
+      this.state // для бейджей-счётчиков «требует внимания» на кнопках вкладок
     );
 
     // 3. Офлайн-прогресс

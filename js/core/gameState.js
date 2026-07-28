@@ -3,6 +3,23 @@ const PROP_BY_ID = Object.fromEntries(PROPERTY_DEFS.map((d) => [d.id, d]));
 const ASSET_BY_ID = Object.fromEntries(MARKET_ASSETS.map((d) => [d.id, d]));
 const DEP_BY_ID = Object.fromEntries(DEPOSIT_DEFS.map((d) => [d.id, d]));
 
+/**
+ * Пороги для счётчиков «требует внимания» (бейджи на вкладках).
+ * Вынесены сюда, а не в CONFIG: это не балансировка экономики,
+ * а чувствительность подсказок интерфейса.
+ */
+const ATTN_COND_BAD = 40;      // состояние объекта, ниже которого аренда уже просела
+const ATTN_FX_RISK = 0.7;      // доля пути до стоп-аута, после которой позиция «горит»
+const ATTN_COFFEE_LOW_H = 2;   // остаток зерна (часы), при котором пора закупаться
+
+/** Подписи причин закрытия валютной позиции (тосты и офлайн-отчёт) */
+const FX_CLOSE_LABELS = {
+  manual: "Закрыто",
+  sl: "🛑 Стоп-лосс",
+  tp: "🎯 Тейк-профит",
+  stopout: "💥 Стоп-аут",
+};
+
 function freshStats() {
   return {
     totalEarned: 0,   // всё заработанное (аренда, купоны, дивиденды, % по вкладам, сделки, трейдинг)
@@ -154,25 +171,34 @@ class GameState extends EventEmitter {
   depositRate(d) { return d.rate + 0.01 * this.perkLv("vip"); }
   /** Эффективный лимит вклада с учётом «Программы лояльности» */
   depositMax(d) { return d.max * (this.perkLv("loyalty") ? 2 : 1); }
-  get startingBalance() {
-    return [CONFIG.STARTING_BALANCE, 5000, 20000, 75000, 250000, 1000000][this.perkLv("heir")];
-  }
+  /** Стартовый капитал нового забега с учётом «Наследства» (формула в prestige.js) */
+  get startingBalance() { return heirBalance(this.perkLv("heir")); }
 
-  /** Сколько монет даст перерождение при текущем капитале */
+  /**
+   * Сколько монет даст перерождение при текущем капитале.
+   * Раньше порога PRESTIGE_MIN_NW перерождение недоступно, зато на самом
+   * пороге сразу даётся K монет — первое перерождение должно окупаться.
+   */
   get pendingCoins() {
-    return Math.floor(Math.sqrt(Math.max(0, this.netWorth) / CONFIG.PRESTIGE_BASE_NW));
+    const nw = Math.max(0, this.netWorth);
+    if (nw < CONFIG.PRESTIGE_MIN_NW) return 0;
+    return Math.floor(CONFIG.PRESTIGE_COIN_K * Math.sqrt(nw / CONFIG.PRESTIGE_BASE_NW));
+  }
+  /** Капитал, при котором перерождение даст ровно c монет (обратная функция) */
+  netWorthForCoins(c) {
+    if (c <= 0) return 0;
+    const need = Math.pow(c / CONFIG.PRESTIGE_COIN_K, 2) * CONFIG.PRESTIGE_BASE_NW;
+    return Math.max(CONFIG.PRESTIGE_MIN_NW, need);
   }
   /** Капитал, необходимый для следующей монеты */
-  get nextCoinAt() {
-    return Math.pow(this.pendingCoins + 1, 2) * CONFIG.PRESTIGE_BASE_NW;
-  }
+  get nextCoinAt() { return this.netWorthForCoins(this.pendingCoins + 1); }
 
   buyPerk(id) {
     const def = PRESTIGE_BY_ID[id];
     if (!def) return false;
     const lv = this.perkLv(id);
-    if (lv >= def.costs.length) return false; // максимум
-    const cost = def.costs[lv];
+    if (lv >= prestigeMaxLv(def)) return false; // максимум (только у одноразовых)
+    const cost = prestigeCost(def, lv);
     if (this.gold < cost) return false;
     this.gold -= cost;
     this.perks[id] = lv + 1;
@@ -710,6 +736,132 @@ class GameState extends EventEmitter {
     return PROPERTY_DEFS.filter((d) => this.props[d.id] && !this.props[d.id].lease).length;
   }
 
+  // ======================= «ТРЕБУЕТ ВНИМАНИЯ» (бейджи вкладок) =======================
+  /**
+   * Счётчики того, где игрока ждёт ДОСТУПНОЕ ДЕЙСТВИЕ прямо сейчас.
+   *
+   * Главный принцип: бейдж означает «сюда стоит зайти и что-то сделать»,
+   * а не «здесь что-то есть». Постоянно горящий счётчик перестают замечать,
+   * поэтому каждое условие, требующее денег, дополнительно проверяет баланс:
+   * «киностудия свободна» без денег на минимальный бюджет — не подсказка,
+   * а раздражитель. По той же причине сюда НЕ попадают «можно купить новый
+   * объект/бизнес» — это не срочность, а витрина, она горела бы всегда.
+   *
+   * Возвращают простые числа, поэтому UI зовёт их каждый тик без кэша.
+   */
+
+  /** Недвижимость: {offers, vacant, repair} */
+  get attnRealty() {
+    let offers = 0, vacant = 0, repair = 0;
+    for (const def of PROPERTY_DEFS) {
+      const p = this.props[def.id];
+      if (!p) continue;
+      // Оффер важнее остального: он истекает через минуту, и решение бесплатно.
+      // Объект с оффером считаем один раз, чтобы не раздувать счётчик.
+      if (p.offer) { offers += 1; continue; }
+      // Простой считаем только без управляющего: с ним игроку делать нечего
+      if (!p.lease && !this.managerHired) vacant += 1;
+      // Ремонт — только если он по карману
+      if (p.cond < ATTN_COND_BAD
+        && this.balance >= def.price * CONFIG.REPAIR_PARTIAL_COST) repair += 1;
+    }
+    return { offers, vacant, repair };
+  }
+
+  /** Форекс: позиции, у которых убыток съел большую часть залога */
+  get attnFxRisk() {
+    return this.fxPositions.filter(
+      (pos) => this.fxTotal(pos) <= -pos.margin * CONFIG.FX_STOPOUT * ATTN_FX_RISK
+    ).length;
+  }
+
+  /** Бизнесы: id -> 0/1, есть ли доступное действие по этому бизнесу */
+  attnBusiness(now = Date.now()) {
+    const r = { coffee: 0, taxi: 0, shop: 0, factory: 0, startup: 0, studio: 0 };
+
+    // Кофейня: зерно на исходе и хватает на закупку.
+    // При включённой автозакупке (с 10 ур.) вмешательство не нужно.
+    const coffee = this.businesses.coffee;
+    if (coffee && coffee.stockH < ATTN_COFFEE_LOW_H && !(coffee.lv >= 10 && coffee.auto)) {
+      const hours = Math.min(6, this.coffeeStockCap(coffee) - coffee.stockH);
+      if (hours > 0.01 && this.balance >= this.coffeeSupplyCost(hours)) r.coffee = 1;
+    }
+
+    // Таксопарк: есть сломанные машины и хватает на ремонт
+    const taxi = this.businesses.taxi;
+    if (taxi) {
+      const cost = this.taxiRepairCost(taxi);
+      if (cost > 0 && this.balance >= cost) r.taxi = 1;
+    }
+
+    // Магазин: кампания не идёт, перерыв закончился, хватает на самую дешёвую
+    const shop = this.businesses.shop;
+    if (shop && !(shop.boost && now < shop.boost.until)
+      && !(shop.lv < 10 && now < shop.cooldownUntil)) {
+      const min = Math.min(...BIZ_BY_ID.shop.campaigns.map((c) => this.shopCampaignPrice(c)));
+      if (this.balance >= min) r.shop = 1;
+    }
+
+    // Завод: контракт ждёт решения (срочно — предложение живёт 90 секунд)
+    const factory = this.businesses.factory;
+    if (factory && factory.offer) r.factory = 1;
+
+    // Стартап: свободен, потенциал R&D не исчерпан, хватает на проект
+    const startup = this.businesses.startup;
+    if (startup && !startup.project && startup.rndMult < BIZ_BY_ID.startup.rnd.cap) {
+      const min = Math.min(
+        ...BIZ_BY_ID.startup.rnd.projects.map((p) => this.startupProjectPrice(p)));
+      if (this.balance >= min) r.startup = 1;
+    }
+
+    // Кинокомпания: съёмок нет и хватает на минимальный бюджет фильма
+    const studio = this.businesses.studio;
+    if (studio && !studio.film
+      && this.balance >= this.bizHourlyFull("studio") * BIZ_BY_ID.studio.film.budgetMinH) {
+      r.studio = 1;
+    }
+
+    return r;
+  }
+
+  /**
+   * Сводка по разделу вкладки «Инвестиции»: {count, urgent}.
+   * urgent — то, что сгорит, если не зайти сейчас (оффер, риск стоп-аута).
+   */
+  attnSection(id) {
+    if (id === "realty") {
+      const r = this.attnRealty;
+      return { count: r.offers + r.vacant + r.repair, urgent: r.offers > 0 };
+    }
+    if (id === "forex") {
+      const n = this.attnFxRisk;
+      return { count: n, urgent: n > 0 };
+    }
+    // Акции, облигации, вклады, крипта: срочных дел не бывает — там решает игрок,
+    // а не таймер. Бейдж «у вас есть деньги» горел бы постоянно.
+    return { count: 0, urgent: false };
+  }
+
+  /**
+   * Сводка по вкладке верхнего уровня: {count, urgent}.
+   * «Главная», «Достижения», «Престиж» и «Статистика» намеренно всегда пустые:
+   * достижения выдаются сами, покупка перка — это накопление, а не срочность,
+   * и такой бейдж горел бы у игрока месяцами.
+   */
+  attnTab(id, now = Date.now()) {
+    if (id === "investments") {
+      const realty = this.attnSection("realty");
+      const forex = this.attnSection("forex");
+      return { count: realty.count + forex.count, urgent: realty.urgent || forex.urgent };
+    }
+    if (id === "business") {
+      const b = this.attnBusiness(now);
+      const count = Object.keys(b).reduce((s, k) => s + b[k], 0);
+      return { count, urgent: b.factory > 0 };
+    }
+    return { count: 0, urgent: false };
+  }
+
   // ======================= ИГРОВОЙ ТИК (1 сек) =======================
   tick(dt, now = Date.now()) {
     let structuralRealty = false;
@@ -1101,9 +1253,8 @@ class GameState extends EventEmitter {
     delete this.fx[posId];
 
     if (!silent) {
-      const label = { manual: "Закрыто", sl: "🛑 Стоп-лосс", tp: "🎯 Тейк-профит", stopout: "💥 Стоп-аут" }[reason];
       this.toast(total >= 0 ? "success" : (reason === "stopout" ? "danger" : "warn"),
-        `${label}: ${def.ticker} ${total >= 0 ? "+" : ""}${Fmt.money(total)}`);
+        `${FX_CLOSE_LABELS[reason]}: ${def.ticker} ${total >= 0 ? "+" : ""}${Fmt.money(total)}`);
     }
     this.structural("forex");
     this.dirty();
@@ -1116,29 +1267,35 @@ class GameState extends EventEmitter {
     return true;
   }
 
+  /** Начислить своп за dt секунд удержания позиции */
+  _fxAccrueSwap(pos, dt) {
+    const def = FX_BY_ID[pos.pair];
+    const rate = pos.dir > 0 ? def.swapLong : def.swapShort;
+    pos.swap += pos.notional * (rate / 100) * (dt / 3600);
+  }
+
   /**
-   * Тик форекса: начисление свопов и срабатывание условий закрытия.
+   * Причина, по которой позицию пора закрыть прямо сейчас, или null.
    * Порядок проверок как у брокера: сперва защитные ордера, затем стоп-аут.
+   * Одна и та же функция работает и в онлайне, и на офлайн-траектории —
+   * чтобы «ночью» позиция жила по тем же правилам, что и при игроке.
    */
+  _fxCloseReason(pos) {
+    const close = pos.dir > 0 ? this.fxBid(pos.pair) : this.fxAsk(pos.pair);
+    if (pos.sl > 0 && ((pos.dir > 0 && close <= pos.sl) || (pos.dir < 0 && close >= pos.sl))) return "sl";
+    if (pos.tp > 0 && ((pos.dir > 0 && close >= pos.tp) || (pos.dir < 0 && close <= pos.tp))) return "tp";
+    if (this.fxTotal(pos) <= -pos.margin * CONFIG.FX_STOPOUT) return "stopout";
+    return null;
+  }
+
+  /** Тик форекса: начисление свопов и срабатывание условий закрытия */
   _fxTick(dt, now) {
     let structural = false;
     for (const pos of this.fxPositions) {
-      const def = FX_BY_ID[pos.pair];
-      const rate = pos.dir > 0 ? def.swapLong : def.swapShort;
-      pos.swap += pos.notional * (rate / 100) * (dt / 3600);
-
-      const bid = this.fxBid(pos.pair);
-      const ask = this.fxAsk(pos.pair);
-      const close = pos.dir > 0 ? bid : ask;
-
-      if (pos.sl > 0 && ((pos.dir > 0 && close <= pos.sl) || (pos.dir < 0 && close >= pos.sl))) {
-        this.closeFxPosition(pos.id, "sl");
-        structural = true;
-      } else if (pos.tp > 0 && ((pos.dir > 0 && close >= pos.tp) || (pos.dir < 0 && close <= pos.tp))) {
-        this.closeFxPosition(pos.id, "tp");
-        structural = true;
-      } else if (this.fxTotal(pos) <= -pos.margin * CONFIG.FX_STOPOUT) {
-        this.closeFxPosition(pos.id, "stopout");
+      this._fxAccrueSwap(pos, dt);
+      const reason = this._fxCloseReason(pos);
+      if (reason) {
+        this.closeFxPosition(pos.id, reason);
         structural = true;
       }
     }
@@ -1292,7 +1449,10 @@ class GameState extends EventEmitter {
     const rep = { seconds: T, rent: 0, coupons: 0, divs: 0, deposits: 0, business: 0, total: 0, fxClosed: [] };
     const start = now - T * 1000;
 
-    this.market.advance(T);
+    // Рынок за время отсутствия проходит траекторию, а не прыгает в точку:
+    // на каждом её отрезке проверяются валютные позиции (см. _fxOfflineStep).
+    // Остальные системы ниже видят ровно то же, что и раньше, — конечные цены.
+    this._offlineMarketPath(T, rep);
 
     // --- аренда ---
     for (const def of PROPERTY_DEFS) {
@@ -1418,28 +1578,6 @@ class GameState extends EventEmitter {
       }
     }
 
-    // --- форекс ---
-    // Точного пути цены за время отсутствия у нас нет, поэтому свопы
-    // начисляем честно за весь период, а защитные ордера и стоп-аут
-    // проверяем по итоговой цене. Это осознанное упрощение: сделка,
-    // которая «сходила» к стопу и вернулась, здесь уцелеет.
-    for (const pos of this.fxPositions) {
-      const def = FX_BY_ID[pos.pair];
-      const rate = pos.dir > 0 ? def.swapLong : def.swapShort;
-      pos.swap += pos.notional * (rate / 100) * (T / 3600);
-
-      const close = pos.dir > 0 ? this.fxBid(pos.pair) : this.fxAsk(pos.pair);
-      let reason = null;
-      if (pos.sl > 0 && ((pos.dir > 0 && close <= pos.sl) || (pos.dir < 0 && close >= pos.sl))) reason = "sl";
-      else if (pos.tp > 0 && ((pos.dir > 0 && close >= pos.tp) || (pos.dir < 0 && close <= pos.tp))) reason = "tp";
-      else if (this.fxTotal(pos) <= -pos.margin * CONFIG.FX_STOPOUT) reason = "stopout";
-      if (reason) {
-        const label = { sl: "стоп-лосс", tp: "тейк-профит", stopout: "стоп-аут" }[reason];
-        const total = this.closeFxPosition(pos.id, reason, true);
-        rep.fxClosed.push({ ticker: def.ticker, label, total });
-      }
-    }
-
     // «Сложный процент»: бонус к заработанному офлайн (тело вкладов не трогаем)
     rep.rent *= this.offlineMult;
     rep.coupons *= this.offlineMult;
@@ -1455,6 +1593,14 @@ class GameState extends EventEmitter {
     this.stats.totalEarned += rep.rent + rep.coupons + rep.divs + depositInterest + rep.business;
     if (rep.total > 0.01) this.stats.offlineCollected += 1;
 
+    // Модалка офлайна показывается только при положительном доходе, а о
+    // закрытых «ночью» валютных позициях игрок должен узнать в любом случае
+    if (rep.fxClosed.length) {
+      const fxNet = rep.fxClosed.reduce((s, c) => s + c.net, 0);
+      this.toast(fxNet >= 0 ? "info" : "warn",
+        `Форекс: за время отсутствия закрыто позиций — ${rep.fxClosed.length} (${fxNet >= 0 ? "+" : ""}${Fmt.money(fxNet)})`);
+    }
+
     this.structural("realty");
     this.structural("deposits");
     this.structural("portfolio");
@@ -1463,6 +1609,50 @@ class GameState extends EventEmitter {
     this.emit("market");
     this.emit("tick", { dt: 0 });
     return rep;
+  }
+
+  /**
+   * Проигрывает рынок за время отсутствия как ТРАЕКТОРИЮ и «доигрывает» на
+   * ней открытые валютные позиции.
+   *
+   * Раньше цена прыгала в конечную точку одним вызовом advance(T), свопы
+   * начислялись сразу за весь период, и только потом — по одной конечной
+   * цене — проверялись стоп-лосс, тейк-профит и стоп-аут. Дыра была тройная:
+   *  1) позиция, которая по дороге пробивала стоп или стоп-аут и успевала
+   *     вернуться, доживала до прихода игрока, хотя в онлайне её бы закрыло;
+   *  2) сделка, закрытая через час после ухода, всё равно получала свопы за
+   *     все часы отсутствия;
+   *  3) отсюда связка «большое плечо + пара с положительным свопом (carry
+   *     trade) + долгий офлайн» давала почти гарантированный доход.
+   *
+   * Теперь период дробится на отрезки, и после каждого начисляется своп
+   * ровно за этот отрезок и проверяются те же условия закрытия, что и в
+   * онлайн-тике (_fxCloseReason). Свопы прекращаются в момент закрытия.
+   * Число отрезков ограничено, поэтому 48 часов офлайна считаются за
+   * миллисекунды; проверка всё равно остаётся грубее онлайновой (там она
+   * ежесекундная), так что офлайн по-прежнему чуть мягче к игроку.
+   */
+  _offlineMarketPath(T, rep) {
+    const steps = U.clamp(
+      Math.ceil(T / CONFIG.FX_OFFLINE_STEP_S), 1, CONFIG.FX_OFFLINE_MAX_STEPS);
+    this.market.advance(T, steps, (seg) => this._fxOfflineStep(seg, rep));
+  }
+
+  /** Один отрезок офлайн-траектории для валютных позиций */
+  _fxOfflineStep(seg, rep) {
+    for (const pos of this.fxPositions) {
+      this._fxAccrueSwap(pos, seg);
+      const reason = this._fxCloseReason(pos);
+      if (!reason) continue;
+      const def = FX_BY_ID[pos.pair];
+      const swap = pos.swap;
+      const margin = pos.margin;
+      const total = this.closeFxPosition(pos.id, reason, true); // тост не нужен — всё в отчёте
+      rep.fxClosed.push({
+        ticker: def.ticker, reason, label: FX_CLOSE_LABELS[reason], total, swap, margin,
+        net: Math.max(total, -margin), // больше залога потерять нельзя
+      });
+    }
   }
 
   _offlineVacancy(p, simNowMs) {

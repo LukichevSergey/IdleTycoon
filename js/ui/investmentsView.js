@@ -34,7 +34,12 @@ class InvestmentsView {
     SECTIONS.forEach((sec, i) => {
       const pill = document.createElement("button");
       pill.className = "pill" + (i === 0 ? " active" : "");
-      pill.textContent = sec.title;
+      // Подпись отдельным элементом: рядом с ней живёт бейдж-счётчик
+      const label = document.createElement("span");
+      label.textContent = sec.title;
+      const badge = AttnBadge.create();
+      pill.appendChild(label);
+      pill.appendChild(badge);
       pill.addEventListener("click", () => this.activate(sec.id));
       nav.appendChild(pill);
 
@@ -44,8 +49,16 @@ class InvestmentsView {
 
       const instance = sec.make();
       instance.mount(wrap);
-      this.sections.push({ id: sec.id, pill, wrap });
+      this.sections.push({ id: sec.id, pill, wrap, badge });
     });
+
+    // Счётчики «требует внимания» — раз в тик, без перестройки DOM
+    this.state.on("tick", () => this.updateBadges());
+    this.updateBadges();
+  }
+
+  updateBadges() {
+    this.sections.forEach((s) => AttnBadge.paint(s.badge, this.state.attnSection(s.id)));
   }
 
   activate(id) {

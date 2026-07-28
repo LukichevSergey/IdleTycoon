@@ -31,7 +31,11 @@ class PrestigeView {
         <div class="prop-desc">
           Начните путь заново, сохранив <b>золотые монеты</b> и все покупки магазина.
           Сбросятся: баланс, недвижимость, <b>бизнесы</b>, портфель, вклады и управляющий.
-          Монеты за перерождение: <b>√(капитал / 1 млн ₽)</b> — бизнесы тоже входят в капитал.
+          Монеты за перерождение: <b>${CONFIG.PRESTIGE_COIN_K} × √(капитал / 1 млн ₽)</b> —
+          бизнесы тоже входят в капитал. Перерождаться можно от
+          ${Fmt.moneyShort(CONFIG.PRESTIGE_MIN_NW)}, и уже на этом пороге дадут
+          ${CONFIG.PRESTIGE_COIN_K} 🪙. Чем дольше забег, тем больше монет — но по корню,
+          так что удвоить награду стоит вчетверо большего капитала.
         </div>
         <div class="prop-meta" style="margin-top:6px">
           <span class="label">Сейчас дадут</span><span class="value gold-text" data-r="pending">—</span>
@@ -60,14 +64,19 @@ class PrestigeView {
     this.buyBtns = {};
     PRESTIGE_DEFS.forEach((def) => {
       const lv = s.perkLv(def.id);
-      const maxed = lv >= def.costs.length;
+      // Уровневые перки бесконечны — «максимум» бывает только у одноразовых
+      const maxed = lv >= prestigeMaxLv(def);
       const card = document.createElement("div");
       card.className = "prop-card" + (lv > 0 ? " owned" : "");
 
       const levelInfo = def.type === "level"
-        ? `<span class="chip ${lv > 0 ? "rating" : ""}">ур. ${lv} / ${def.costs.length}</span>`
+        ? `<span class="chip ${lv > 0 ? "rating" : ""}">ур. ${lv} · ∞</span>`
         : (maxed ? `<span class="chip rating">Куплено ✓</span>` : "");
 
+      const curLine = def.current && lv > 0
+        ? `<div class="perk-cur">${def.current(lv)}</div>` : "";
+
+      const cost = maxed ? 0 : prestigeCost(def, lv);
       card.innerHTML = `
         <div class="prop-head">
           <div class="prop-icon">${def.icon}</div>
@@ -75,14 +84,17 @@ class PrestigeView {
           ${levelInfo}
         </div>
         <div class="prop-desc">${def.effect}</div>
+        ${curLine}
         ${maxed
-          ? `<div class="status-line muted">${def.type === "level" ? "Максимальный уровень" : "Эффект действует"}</div>`
-          : `<button class="buy-btn" data-perk="${def.id}">Купить за ${def.costs[lv]} 🪙</button>`}
+          ? `<div class="status-line muted">Эффект действует</div>`
+          : `<button class="buy-btn" data-perk="${def.id}">${
+              def.type === "level" ? `Ур. ${lv + 1} за ${cost} 🪙` : `Купить за ${cost} 🪙`
+            }</button>`}
       `;
       const btn = card.querySelector("[data-perk]");
       if (btn) {
         btn.addEventListener("click", () => s.buyPerk(def.id));
-        this.buyBtns[def.id] = { btn, cost: def.costs[lv] };
+        this.buyBtns[def.id] = { btn, cost };
       }
       shop.appendChild(card);
     });
@@ -102,8 +114,9 @@ class PrestigeView {
     q("pending").textContent = `+${pending} 🪙`;
     q("nextAt").textContent = Fmt.moneyShort(s.nextCoinAt);
 
-    // Прогресс до следующей монеты (от предыдущего порога)
-    const prevAt = Math.pow(pending, 2) * CONFIG.PRESTIGE_BASE_NW;
+    // Прогресс до следующей монеты (от предыдущего порога).
+    // До первого перерождения «предыдущий порог» — ноль, а следующий — минимум.
+    const prevAt = s.netWorthForCoins(pending);
     const frac = U.clamp((s.netWorth - prevAt) / (s.nextCoinAt - prevAt), 0, 1);
     q("progress").style.width = (frac * 100).toFixed(1) + "%";
     q("progressPct").textContent = Math.floor(frac * 100) + "%";
@@ -112,7 +125,7 @@ class PrestigeView {
     btn.disabled = pending < 1;
     btn.textContent = pending >= 1
       ? `👑 Переродиться (+${pending} 🪙)`
-      : `Нужен капитал от ${Fmt.moneyShort(CONFIG.PRESTIGE_BASE_NW)}`;
+      : `Нужен капитал от ${Fmt.moneyShort(CONFIG.PRESTIGE_MIN_NW)}`;
 
     // Доступность покупок в магазине
     Object.values(this.buyBtns).forEach(({ btn: b, cost }) => {

@@ -82,7 +82,10 @@ html, body {
   font-size: 14px; font-weight: 600;
   padding: 10px 8px; border-radius: 10px; cursor: pointer;
   transition: background 0.25s ease, color 0.25s ease;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 0;
 }
+.tab-btn .tab-label { white-space: nowrap; }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active {
   background: var(--bg-card); color: var(--accent-gold);
@@ -107,11 +110,39 @@ html, body {
   font-family: inherit; font-size: 13px; font-weight: 600;
   padding: 8px 16px; border-radius: 999px; cursor: pointer;
   transition: all 0.2s ease;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .pill:hover { color: var(--text); }
 .pill.active {
   background: var(--accent-gold); color: #1a1405;
   border-color: var(--accent-gold);
+}
+
+/* ---------- Бейдж «требует внимания» ----------
+   Компактный счётчик на кнопке вкладки и на «пилюле» раздела.
+   Показывается ТОЛЬКО когда есть доступное игроку действие (см. GameState.attnTab),
+   поэтому золотой цвет остаётся заметным, а красный «срочный» — редким. */
+.attn-badge {
+  display: none;
+  flex: none;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 800; line-height: 18px;
+  text-align: center; font-variant-numeric: tabular-nums;
+  background: var(--accent-gold); color: #1a1405;
+}
+.attn-badge.visible { display: inline-block; }
+/* Срочное — истекающий оффер, риск стоп-аута: выделяем сильнее и пульсируем */
+.attn-badge.urgent {
+  background: var(--danger); color: #fff;
+  animation: attnPulse 1.6s ease-in-out infinite;
+}
+/* На активной «пилюле» фон уже золотой — инвертируем, иначе бейджа не видно */
+.pill.active .attn-badge { background: #1a1405; color: var(--accent-gold); }
+.pill.active .attn-badge.urgent { background: var(--danger); color: #fff; }
+@keyframes attnPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 }
 
 /* ---------- Сводка раздела ---------- */
@@ -530,6 +561,12 @@ html, body {
   display: flex; flex-direction: column; gap: 10px;
 }
 .prestige-head { font-size: 16px; font-weight: 800; color: var(--accent-gold); }
+/* Накопленный эффект уровневого перка (уровни бесконечны, итог важнее цены) */
+.perk-cur {
+  font-size: 12px; font-weight: 600;
+  color: var(--accent-gold);
+  margin-top: -2px;
+}
 .chip.insider-cheap { color: var(--accent-green); border-color: var(--accent-green); }
 .chip.insider-dear { color: var(--accent-red); border-color: var(--danger); }
 
@@ -620,6 +657,11 @@ html, body {
 @media (max-width: 480px) {
   .app { padding: 14px 10px 80px; }
   .balance-hero { padding: 26px 14px; }
-  .tab-btn { font-size: 12px; padding: 9px 4px; }
+  .tab-btn { font-size: 12px; padding: 9px 4px; gap: 4px; }
   .header-balance { display: none; }
+  /* Бейдж ужимаем, чтобы шесть вкладок по-прежнему ложились в две строки */
+  .tab-btn .attn-badge {
+    min-width: 15px; height: 15px; line-height: 15px;
+    font-size: 10px; padding: 0 3px;
+  }
 }

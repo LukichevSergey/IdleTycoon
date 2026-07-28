@@ -52,26 +52,66 @@ class MarketSim {
     this._push(s, s.price);
   }
 
-  /** Офлайн-прыжок: эквивалент T секунд случайного блуждания одним шагом */
-  advance(seconds) {
-    const ticks = seconds / (CONFIG.MARKET_TICK_MS / 1000);
+  /**
+   * Офлайн-прогресс рынка за `seconds`.
+   *
+   * Период разбивается на `steps` равных отрезков; после каждого вызывается
+   * `onStep(seg)`. Это нужно форексу: маржинальной позиции важна не только
+   * конечная цена, но и путь — по дороге мог сработать стоп-лосс или стоп-аут.
+   * При steps = 1 поведение прежнее — один прыжок на весь период.
+   *
+   * Дисперсия одного отрезка берётся ТОЧНОЙ для AR(1) с возвратом:
+   *   V(n) = (1 - ρ^(2n)) / (1 - ρ²),  ρ = 1 - MOOD_REVERSION,
+   * где n — число рыночных тиков в отрезке. Это принципиально при дроблении:
+   * у точной формулы K отрезков складываются ровно в ту же стационарную
+   * дисперсию, что и один большой прыжок, тогда как прежнее приближение
+   * min(n, 1/(2θ)) завышало дисперсию каждого отрезка и при дроблении
+   * раздувало итоговую волатильность.
+   *
+   * @param {number} seconds длительность офлайна
+   * @param {number} [steps] на сколько отрезков дробить путь
+   * @param {function(number):void} [onStep] колбэк после каждого отрезка
+   */
+  advance(seconds, steps = 1, onStep = null) {
+    steps = Math.max(1, Math.floor(steps));
+    const seg = seconds / steps;
+    const n = seg / (CONFIG.MARKET_TICK_MS / 1000);
+    const rho = 1 - CONFIG.MOOD_REVERSION;
+    const damp = Math.pow(rho, n);
+    const varFactor = Math.sqrt((1 - Math.pow(rho, 2 * n)) / (1 - rho * rho));
+
+    // Параметры отрезка одинаковы для всех шагов — считаем их один раз,
+    // чтобы 48 часов офлайна не превратились в тысячи лишних Math.pow
+    const items = [];
+    const from = {};
     this.defs.forEach((d) => {
       const s = this.s[d.id];
-      const oldPrice = s.price;
-      s.anchor *= Math.exp(d.growth * (seconds / 86400));
-      // Дисперсия блуждания с возвратом ограничена стационарной (~1/(2θ))
-      const damp = Math.exp(-CONFIG.MOOD_REVERSION * ticks);
-      const sigmaEff = d.vol * Math.sqrt(Math.min(ticks, 1 / (2 * CONFIG.MOOD_REVERSION)));
-      const lm = Math.log(s.mood) * damp + sigmaEff * U.randn();
-      s.mood = U.clamp(Math.exp(lm), d.moodRange[0], d.moodRange[1]);
-      s.price = s.anchor * s.mood;
-      // Заполняем спарклайн правдоподобной интерполяцией
-      for (let i = 1; i <= 8; i++) {
-        const p = oldPrice + ((s.price - oldPrice) * i) / 8;
-        this._push(s, p * (1 + d.vol * 2 * U.randn()));
+      from[d.id] = s.price;
+      items.push({ d, s, anchorMult: Math.exp(d.growth * (seg / 86400)), sigma: d.vol * varFactor });
+    });
+
+    for (let i = 0; i < steps; i++) {
+      for (const it of items) {
+        const s = it.s;
+        s.anchor *= it.anchorMult;
+        const lm = Math.log(s.mood) * damp + it.sigma * U.randn();
+        s.mood = U.clamp(Math.exp(lm), it.d.moodRange[0], it.d.moodRange[1]);
+        s.price = s.anchor * s.mood;
+      }
+      if (onStep) onStep(seg);
+    }
+
+    // Спарклайн заполняем один раз в конце: если рисовать его на каждом
+    // отрезке, история (60 точек) будет забита служебными шагами офлайна.
+    for (const it of items) {
+      const s = it.s;
+      const oldPrice = from[it.d.id];
+      for (let k = 1; k <= 8; k++) {
+        const p = oldPrice + ((s.price - oldPrice) * k) / 8;
+        this._push(s, p * (1 + it.d.vol * 2 * U.randn()));
       }
       this._push(s, s.price);
-    });
+    }
   }
 
   _push(s, price) {
