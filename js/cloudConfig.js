@@ -13,6 +13,6 @@
  * а не скрытность ключа. Коммитить их в открытый репозиторий безопасно.
  */
 const CLOUD_CONFIG = {
-  apiKey: "",
-  projectId: "",
+  apiKey: "AIzaSyCnSXOvKrgjIleI4c1M7_U1sKpnpx_02t0",
+  projectId: "idle-finance-tycoon",
 };
