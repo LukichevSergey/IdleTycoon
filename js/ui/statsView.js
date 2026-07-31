@@ -12,10 +12,12 @@ class StatsView {
       <div class="stats-grid" id="stats-grid"></div>
       <div class="settings-section">
         <h3>Настройки</h3>
+        <div id="cloud-host"></div>
         <div id="settings-host"></div>
       </div>
     `;
     this.grid = container.querySelector("#stats-grid");
+    new CloudSection(this.state, this.game).mount(container.querySelector("#cloud-host"));
     new SettingsSection(this.state, this.game).mount(container.querySelector("#settings-host"));
     this.state.on("tick", () => this.update());
     this.update();

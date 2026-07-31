@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Финансовый магнат</title>
-<link rel="stylesheet" href="css/styles.css?v=11">
+<link rel="stylesheet" href="css/styles.css?v=12">
 </head>
 <body>
 
@@ -33,6 +33,34 @@
     <div class="offline-rows" id="offline-rows"></div>
     <div class="m-line" id="offline-time"></div>
     <button class="buy-btn" id="offline-collect-btn" style="width:100%">Забрать</button>
+  </div>
+</div>
+
+<!-- Выбор между сохранением этого устройства и облачным.
+     Крестика и закрытия по клику мимо нет намеренно: игра не может
+     продолжаться, пока не решено, какой из двух прогрессов продолжать. -->
+<div class="modal-overlay" id="cloud-conflict-modal">
+  <div class="modal">
+    <h2>Какой прогресс продолжить?</h2>
+    <div class="m-line">
+      Сохранение в этом браузере и сохранение в облаке разошлись —
+      похоже, вы играли на другом устройстве. Выберите, что оставить:
+      второе будет заменено (откат доступен в настройках).
+    </div>
+    <div class="conflict-grid">
+      <div class="conflict-card">
+        <div class="cc-title">💻 Это устройство</div>
+        <div id="cc-local"></div>
+      </div>
+      <div class="conflict-card">
+        <div class="cc-title">☁ Облако</div>
+        <div id="cc-cloud"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="buy-btn alt" id="cc-pick-local">Оставить это устройство</button>
+      <button class="buy-btn" id="cc-pick-cloud">Взять из облака</button>
+    </div>
   </div>
 </div>
 
@@ -124,34 +152,37 @@
      конфиг → утилиты → данные → ядро → UI → точка сборки.
      ?v=N — сброс кэша браузера: БУДЬТЕ ВНИМАТЕЛЬНЫ, при выкладке изменений
      номер надо увеличить, иначе игроки получат смесь старых и новых файлов. -->
-<script src="js/config.js?v=11"></script>
-<script src="js/core/utils.js?v=11"></script>
-<script src="js/core/eventEmitter.js?v=11"></script>
-<script src="js/data/properties.js?v=11"></script>
-<script src="js/data/market.js?v=11"></script>
-<script src="js/data/forex.js?v=11"></script>
-<script src="js/data/deposits.js?v=11"></script>
-<script src="js/data/prestige.js?v=11"></script>
-<script src="js/data/businesses.js?v=11"></script>
-<script src="js/data/achievements.js?v=11"></script>
-<script src="js/core/marketSim.js?v=11"></script>
-<script src="js/core/storage.js?v=11"></script>
-<script src="js/core/gameState.js?v=11"></script>
-<script src="js/ui/toasts.js?v=11"></script>
-<script src="js/ui/modals.js?v=11"></script>
-<script src="js/ui/homeView.js?v=11"></script>
-<script src="js/ui/realtySection.js?v=11"></script>
-<script src="js/ui/marketSection.js?v=11"></script>
-<script src="js/ui/forexModal.js?v=11"></script>
-<script src="js/ui/forexSection.js?v=11"></script>
-<script src="js/ui/depositsSection.js?v=11"></script>
-<script src="js/ui/investmentsView.js?v=11"></script>
-<script src="js/ui/businessView.js?v=11"></script>
-<script src="js/ui/achievementsView.js?v=11"></script>
-<script src="js/ui/prestigeView.js?v=11"></script>
-<script src="js/ui/settingsSection.js?v=11"></script>
-<script src="js/ui/statsView.js?v=11"></script>
-<script src="js/ui/tabManager.js?v=11"></script>
-<script src="js/main.js?v=11"></script>
+<script src="js/config.js?v=12"></script>
+<script src="js/cloudConfig.js?v=12"></script>
+<script src="js/core/utils.js?v=12"></script>
+<script src="js/core/eventEmitter.js?v=12"></script>
+<script src="js/data/properties.js?v=12"></script>
+<script src="js/data/market.js?v=12"></script>
+<script src="js/data/forex.js?v=12"></script>
+<script src="js/data/deposits.js?v=12"></script>
+<script src="js/data/prestige.js?v=12"></script>
+<script src="js/data/businesses.js?v=12"></script>
+<script src="js/data/achievements.js?v=12"></script>
+<script src="js/core/marketSim.js?v=12"></script>
+<script src="js/core/storage.js?v=12"></script>
+<script src="js/core/cloudSync.js?v=12"></script>
+<script src="js/core/gameState.js?v=12"></script>
+<script src="js/ui/toasts.js?v=12"></script>
+<script src="js/ui/modals.js?v=12"></script>
+<script src="js/ui/homeView.js?v=12"></script>
+<script src="js/ui/realtySection.js?v=12"></script>
+<script src="js/ui/marketSection.js?v=12"></script>
+<script src="js/ui/forexModal.js?v=12"></script>
+<script src="js/ui/forexSection.js?v=12"></script>
+<script src="js/ui/depositsSection.js?v=12"></script>
+<script src="js/ui/investmentsView.js?v=12"></script>
+<script src="js/ui/businessView.js?v=12"></script>
+<script src="js/ui/achievementsView.js?v=12"></script>
+<script src="js/ui/prestigeView.js?v=12"></script>
+<script src="js/ui/cloudSection.js?v=12"></script>
+<script src="js/ui/settingsSection.js?v=12"></script>
+<script src="js/ui/statsView.js?v=12"></script>
+<script src="js/ui/tabManager.js?v=12"></script>
+<script src="js/main.js?v=12"></script>
 </body>
 </html>

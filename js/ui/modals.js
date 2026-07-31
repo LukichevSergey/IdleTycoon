@@ -60,6 +60,49 @@ const OfflineModal = {
 };
 
 /**
+ * Выбор между сейвом этого устройства и облачным, когда они разошлись.
+ * Автоматика тут опасна: «свежий побеждает» молча стирает вечер игры,
+ * если на телефоне играли без сети. Поэтому решение принимает игрок,
+ * а окно показывает по чему сравнивать. Закрыть его, не выбрав, нельзя.
+ */
+const CloudConflictModal = {
+  /** @returns {Promise<"local"|"cloud">} */
+  ask(local, cloud) {
+    const overlay = document.getElementById("cloud-conflict-modal");
+    document.getElementById("cc-local").innerHTML = this._card(local, cloud);
+    document.getElementById("cc-cloud").innerHTML = this._card(cloud, local);
+    overlay.classList.add("visible");
+
+    return new Promise((resolve) => {
+      const pick = (choice) => () => {
+        overlay.classList.remove("visible");
+        resolve(choice);
+      };
+      // Слушатели одноразовые: окно может открыться снова за сессию
+      document.getElementById("cc-pick-local").addEventListener("click", pick("local"), { once: true });
+      document.getElementById("cc-pick-cloud").addEventListener("click", pick("cloud"), { once: true });
+    });
+  },
+
+  /** Карточка сейва; other нужен, чтобы отметить, какой из двух свежее */
+  _card(save, other) {
+    const ts = save.lastTimestamp || 0;
+    const fresher = ts >= (other.lastTimestamp || 0);
+    const rows = [
+      ["Капитал", Fmt.moneyShort(save.balance || 0)],
+      ["В игре", Fmt.dur(save.stats?.playTimeSec || 0)],
+      ["Перерождений", String(save.prestigeCount || 0)],
+      ["Золотых монет", "🪙 " + (save.gold || 0)],
+      ["Сохранён", ts ? Fmt.durShort((Date.now() - ts) / 1000) + " назад" : "неизвестно"],
+    ];
+    return (fresher ? `<div class="cc-flag">свежее</div>` : `<div class="cc-flag old">старее</div>`)
+      + `<div class="prop-meta">`
+      + rows.map(([l, v]) => `<span class="label">${l}</span><span class="value">${v}</span>`).join("")
+      + `</div>`;
+  },
+};
+
+/**
  * Модалка покупки/продажи биржевых активов.
  * Живёт поверх любого раздела; цена обновляется на каждом рыночном тике.
  */

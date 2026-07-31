@@ -2,8 +2,7 @@
 /**
  * Слой хранения. StorageProvider — контракт (асинхронный, чтобы замена
  * на серверное API не меняла вызывающий код).
- * // TODO: FirebaseStorageProvider / RestApiStorageProvider — реализовать
- *          save/load/clear и подставить в main.js
+ * Пример реализации поверх сети — FirestoreSaveProvider в core/cloudSync.js.
  */
 class StorageProvider {
   async save(_data) { throw new Error("Не реализовано"); }
